@@ -153,53 +153,13 @@ def register():
         type=SSPrefClipboard, options={'SKIP_SAVE'},
     )
     UnifiedRegistry.register(ClipboardFeature())
-    # Backward-compat: also register with legacy registries during migration
-    _register_legacy()
 
 
 def unregister():
     """Unregister PropertyGroups and the extension."""
-    _unregister_legacy()
     UnifiedRegistry.unregister("clipboard")
     try:
         del bpy.types.WindowManager.superskin_clipboard_prefs
     except Exception:
         pass
     bpy.utils.unregister_class(SSPrefClipboard)
-
-
-def _register_legacy():
-    """Register with legacy registries for backward compatibility during migration."""
-    try:
-        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
-
-        # Legacy BaseDomain registration
-        class _ClipboardDomain(BaseDomain):
-            def get_id(self): return "clipboard"
-            def get_actions(self): return ClipboardFeature().get_actions()
-            def execute(self, action, context, core_facade):
-                return ClipboardFeature().execute(action, context, core_facade)
-        DomainRegistry.register(_ClipboardDomain())
-
-        # Legacy PrefsExtensionSpec registration
-        PrefsExtensionRegistry.register(PrefsExtensionSpec(
-            json_key="clipboard",
-            json_path=("clipboard",),
-            section_title="Clipboard Manager",
-            draw_tab='SKINNING',
-            draw_section_fn=lambda layout: ClipboardFeature().draw_section(layout, bpy.context),
-            populate_fn=ClipboardFeature().populate,
-            serialize_into_fn=ClipboardFeature().serialize_into,
-            defaults_path=os.path.join(os.path.dirname(__file__), "default_config.json"),
-        ))
-    except Exception:
-        pass
-
-
-def _unregister_legacy():
-    """Remove from legacy registries."""
-    try:
-        from ...interface.registry import PrefsExtensionRegistry
-        PrefsExtensionRegistry.unregister("clipboard")
-    except Exception:
-        pass

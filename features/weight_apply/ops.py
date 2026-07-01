@@ -1,7 +1,7 @@
 """Weight-apply operators — Add, Scale, Smooth, Sharpen + preset menus + preset setter."""
 
 import bpy
-from ...interface.utils.op_exec import run_domain
+from ...interface.utils.op_exec import run_domain_via_unified
 from .weight_apply_feature import get_prefs
 
 
@@ -11,7 +11,7 @@ class OBJECT_OT_mw_add_weight(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        return run_domain(context, "add")
+        return run_domain_via_unified(context, "weight_apply", "add")
 
 
 class OBJECT_OT_mw_scale_weight(bpy.types.Operator):
@@ -20,7 +20,7 @@ class OBJECT_OT_mw_scale_weight(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        return run_domain(context, "scale")
+        return run_domain_via_unified(context, "weight_apply", "scale")
 
 
 class OBJECT_OT_mw_smooth_weight(bpy.types.Operator):
@@ -29,7 +29,7 @@ class OBJECT_OT_mw_smooth_weight(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        return run_domain(context, "smooth")
+        return run_domain_via_unified(context, "weight_apply", "smooth")
 
 
 class OBJECT_OT_mw_sharpen_weight(bpy.types.Operator):
@@ -38,7 +38,7 @@ class OBJECT_OT_mw_sharpen_weight(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        return run_domain(context, "sharpen")
+        return run_domain_via_unified(context, "weight_apply", "sharpen")
 
 
 # ── Preset menus ──────────────────────────────────────────────────────────

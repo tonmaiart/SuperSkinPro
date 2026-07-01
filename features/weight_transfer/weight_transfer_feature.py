@@ -63,49 +63,10 @@ class WeightTransferFeature(UnifiedFeatureExtension):
 # ==============================================================================
 
 def register():
-    """Register with UnifiedRegistry and legacy registries for backward compat."""
+    """Register with UnifiedRegistry."""
     UnifiedRegistry.register(WeightTransferFeature())
-    _register_legacy()
 
 
 def unregister():
-    """Unregister from all registries."""
-    _unregister_legacy()
+    """Unregister from UnifiedRegistry."""
     UnifiedRegistry.unregister("weight_transfer")
-
-
-def _register_legacy():
-    """Register with legacy registries for backward compatibility during migration."""
-    try:
-        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
-
-        # Legacy BaseDomain registration
-        class _WeightTransferDomain(BaseDomain):
-            def get_id(self): return "weight_transfer"
-            def get_actions(self): return ["transfer_weight_maya"]
-            def execute(self, action, context, core_facade):
-                return WeightTransferFeature().execute(action, context, core_facade)
-        DomainRegistry.register(_WeightTransferDomain())
-
-        # Legacy PrefsExtensionSpec registration
-        PrefsExtensionRegistry.register(PrefsExtensionSpec(
-            json_key="weight_transfer",
-            json_path=("weight_transfer",),
-            section_title="Toolkit",
-            draw_tab='LAYER',
-            draw_section_fn=ui.draw_section,
-            populate_fn=lambda data: None,
-            serialize_into_fn=lambda d: None,
-            defaults_path=_DEFAULTS_PATH,
-        ))
-    except Exception:
-        pass
-
-
-def _unregister_legacy():
-    """Remove from legacy registries."""
-    try:
-        from ...interface.registry import PrefsExtensionRegistry
-        PrefsExtensionRegistry.unregister("weight_transfer")
-    except Exception:
-        pass

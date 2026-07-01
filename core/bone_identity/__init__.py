@@ -10,10 +10,11 @@ from importlib import reload
 from .bone_identity_service import BoneIdentityService
 from . import armature_ids
 from . import orphan_resolver
+from . import ops
 from . import bone_identity_service
 
 
-for mod in (armature_ids, orphan_resolver, bone_identity_service):
+for mod in (armature_ids, orphan_resolver, ops, bone_identity_service):
     try:
         reload(mod)
     except Exception:
@@ -21,8 +22,9 @@ for mod in (armature_ids, orphan_resolver, bone_identity_service):
 
 
 def register():
-    pass
+    ops.register()
 
 
 def unregister():
     BoneIdentityService.clear_scan_cache()
+    ops.unregister()

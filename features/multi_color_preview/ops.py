@@ -1,7 +1,7 @@
 """Operator shells for the multi_color_preview feature domain."""
 
 import bpy
-from ...interface.utils.op_exec import run_domain
+from ...interface.utils.op_exec import run_domain_via_unified
 
 
 class SUPERSKIN_OT_toggle_multi_color(bpy.types.Operator):
@@ -9,7 +9,7 @@ class SUPERSKIN_OT_toggle_multi_color(bpy.types.Operator):
     bl_label = "Toggle Multi Color Preview"
 
     def execute(self, context):
-        return run_domain(context, "toggle_multi_color")
+        return run_domain_via_unified(context, "multi_color_preview", "toggle_multi_color")
 
 
 _classes = (SUPERSKIN_OT_toggle_multi_color,)

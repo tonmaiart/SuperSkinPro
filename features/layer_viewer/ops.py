@@ -8,7 +8,7 @@ domain extraction.
 import bpy
 
 from ...core.facade import CoreFacade
-from ...core_subsystems.license import LicenseService
+from ...core_subsystems.license_gateway import LicenseGateway
 from ...interface.utils.utils import (
     _is_valid_mesh,
     _has_layer_system,
@@ -63,7 +63,7 @@ class SUPERSKIN_OT_layer_add(bpy.types.Operator):
         meta = ctrl.layer_meta_list()
         existing = len(meta)
 
-        limit = LicenseService.layer_limit()
+        limit = LicenseGateway.layer_limit()
         if limit is not None and existing >= limit:
             self.report({'WARNING'},
                         f"Free version is limited to {limit} layers — activate a Pro "
@@ -149,7 +149,7 @@ class SUPERSKIN_OT_layer_duplicate(bpy.types.Operator):
         if target < 0:
             target = ctrl.active_layer_index
 
-        limit = LicenseService.layer_limit()
+        limit = LicenseGateway.layer_limit()
         if limit is not None and len(ctrl.layer_meta_list()) >= limit:
             self.report({'WARNING'},
                         f"Free version is limited to {limit} layers — activate a Pro "

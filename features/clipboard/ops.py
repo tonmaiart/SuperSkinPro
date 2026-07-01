@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Natchapon Srisuk. All rights reserved.
 import bpy
 from ...core.facade import CoreFacade
-from ...interface.utils.op_exec import run_domain
+from ...interface.utils.op_exec import run_domain_via_unified
 
 # ==============================================================================
 # VERTEX OPERATORS (Smart Auto-Detect)
@@ -14,7 +14,7 @@ class OBJECT_OT_ssp_copy_weight(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        return run_domain(context, "copy")
+        return run_domain_via_unified(context, "clipboard", "copy")
 
 
 class OBJECT_OT_ssp_cut_weight(bpy.types.Operator):
@@ -24,7 +24,7 @@ class OBJECT_OT_ssp_cut_weight(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        return run_domain(context, "cut")
+        return run_domain_via_unified(context, "clipboard", "cut")
 
 
 class OBJECT_OT_ssp_paste_weight_add(bpy.types.Operator):
@@ -33,7 +33,7 @@ class OBJECT_OT_ssp_paste_weight_add(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        return run_domain(context, "paste_add")
+        return run_domain_via_unified(context, "clipboard", "paste_add")
 
 
 class OBJECT_OT_ssp_paste_weight_subtract(bpy.types.Operator):
@@ -42,7 +42,7 @@ class OBJECT_OT_ssp_paste_weight_subtract(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        return run_domain(context, "paste_subtract")
+        return run_domain_via_unified(context, "clipboard", "paste_subtract")
 
 
 class OBJECT_OT_ssp_paste_weight_replace(bpy.types.Operator):
@@ -51,7 +51,7 @@ class OBJECT_OT_ssp_paste_weight_replace(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        return run_domain(context, "paste_replace")
+        return run_domain_via_unified(context, "clipboard", "paste_replace")
 
 
 # ==============================================================================

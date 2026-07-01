@@ -4,7 +4,6 @@ import bpy
 from ...core.facade import CoreFacade
 from mathutils import Vector
 from bpy_extras import view3d_utils
-from . import draw as _draw
 from . import deform_overlay as _deform_overlay
 
 _bone_picker_active = False
@@ -15,8 +14,8 @@ class OBJECT_OT_ssp_toggle_color_bone_style(bpy.types.Operator):
     bl_label = "Toggle Color Bone Style"
 
     def execute(self, context):
-        from ...interface.utils.op_exec import run_domain
-        return run_domain(context, "toggle_multi_color")
+        from ...interface.utils.op_exec import run_domain_via_unified
+        return run_domain_via_unified(context, "multi_color_preview", "toggle_multi_color")
 
 
 class OBJECT_OT_ssp_clear_multi_selection(bpy.types.Operator):
@@ -114,7 +113,7 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
         elif event.type == 'RIGHTMOUSE':
             if event.value == 'RELEASE':
                 _bone_picker_active = False
-                _draw.stop_bone_picker_draw()
+                # stop_bone_picker_draw() was a no-op; removed in Phase 8
                 _deform_overlay.clear_hover()
                 _deform_overlay.set_holding(False)
                 self._restore_overlay()
@@ -138,7 +137,7 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
             if not self._multi_mode and self.hovered_bone:
                 self._select_single_bone(context, self.hovered_bone)
             _bone_picker_active = False
-            _draw.stop_bone_picker_draw()
+            # stop_bone_picker_draw() was a no-op; removed in Phase 8
             _deform_overlay.clear_hover()
             _deform_overlay.set_holding(False)
             self._restore_overlay()
@@ -147,7 +146,7 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
         # ── ESC: cancel ───────────────────────────────────────────────────
         elif event.type == 'ESC':
             _bone_picker_active = False
-            _draw.stop_bone_picker_draw()
+            # stop_bone_picker_draw() was a no-op; removed in Phase 8
             _deform_overlay.clear_hover()
             _deform_overlay.set_holding(False)
             self._restore_overlay()
@@ -394,7 +393,7 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
         _deform_overlay.show()
         _deform_overlay.set_holding(True)
         context.area.tag_redraw()
-        _draw.start_bone_picker_draw(self)
+        # start_bone_picker_draw() was a no-op; removed in Phase 8
         global _bone_picker_active
         _bone_picker_active = True
         context.window_manager.modal_handler_add(self)

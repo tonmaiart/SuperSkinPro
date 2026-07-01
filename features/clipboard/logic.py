@@ -3,111 +3,9 @@ from __future__ import annotations
 from ...core.facade import CoreFacade as _CoreFacade
 data_ops = _CoreFacade.get_clipboard_data_ops()
 
-# ═════════════════════════════════════════════════════════════════════════
-#  🌟 NEW: MANUAL DATA PIPELINE (ทำงานตาม Enum สั่ง ไม่สนบริบทหน้าจอ)
-# ═════════════════════════════════════════════════════════════════════════
-
-def copy_data_manual(ctrl, action: str = 'COPY') -> dict:
-    """สั่งคัดลอก/ตัดข้อมูลแมนนวล บังคับสลับชั้น Custom Properties ตาม Enum UI"""
-    clip_mgr = _clipboard_manager
-    selected = ctrl._selected_verts()
-    all_verts_count = len(ctrl.mesh.vertices)
-    
-    # สกัดข้อมูลโดยตรงจาก WindowManager Enum
-    prefs = ctrl.context.window_manager.superskin_clipboard_prefs
-    force_mask = (prefs.target_data_type == 'LAYER')
-
-    if len(selected) == 0 or len(selected) == all_verts_count:
-        if force_mask:
-            mask_dict = ctrl.storage.read_active_mask_dict()
-            subset = {str(k): v for k, v in mask_dict.items()}
-        else:
-            layer_dict = ctrl.storage.read_active_layer_dict()
-            subset = {str(k): dict(w) for k, w in layer_dict.items()}
-    else:
-        if force_mask:
-            mask_dict = ctrl.storage.read_active_mask_dict()
-            subset = data_ops.extract_mask_subset(mask_dict, selected)
-        else:
-            layer_dict = ctrl.storage.read_active_layer_dict()
-            subset = data_ops.extract_weight_subset(layer_dict, selected)
-
-    if not subset:
-        raise ValueError("Nothing to capture — Selected target has no active weights.")
-
-    kind = 'MASK' if force_mask else 'WEIGHT'
-    clip_mgr.set_clipboard(kind, subset, ctrl.mesh.name)
-
-    if action == 'CUT':
-        if len(selected) == 0 or len(selected) == all_verts_count:
-            if force_mask:
-                ctrl.storage.write_mask_dict(ctrl.active_layer_index, {})
-            else:
-                ctrl.storage.write_layer_dict(ctrl.active_layer_index, {})
-        else:
-            sel_set = {int(v) for v in selected}
-            if force_mask:
-                mask_dict = ctrl.storage.read_active_mask_dict()
-                remaining = {int(k): w for k, w in mask_dict.items() if int(k) not in sel_set}
-                ctrl.storage.write_mask_dict(ctrl.active_layer_index, remaining)
-            else:
-                layer_dict = ctrl.storage.read_active_layer_dict()
-                remaining = {int(k): dict(w) for k, w in layer_dict.items() if int(k) not in sel_set}
-                ctrl.storage.write_layer_dict(ctrl.active_layer_index, remaining)
-        ctrl._finish(color_only=False)
-
-    return clip_mgr.get_clipboard()
-
-
-def paste_data_manual(ctrl, mode: str = 'REPLACE') -> dict:
-    """สั่งวางข้อมูลแมนนวล ดัดแปลงค่าน้ำหนักปลายทางอิงตาม Enum 100%"""
-    clip_mgr = _clipboard_manager
-    if not clip_mgr.has_clipboard():
-        raise ValueError("Clipboard is empty — copy or cut first")
-
-    clip = clip_mgr.get_clipboard()
-    clip_data = clip["data"]
-    clip_kind = clip["kind"]
-    source_mesh_name = clip["source_mesh"]
-
-    # บังคับประเภทข้อมูลปลายทางจาก Enum เสมอ
-    prefs = ctrl.context.window_manager.superskin_clipboard_prefs
-    force_mask_target = (prefs.target_data_type == 'LAYER')
-    
-    target_verts = ctrl._selected_verts()
-    if len(target_verts) == 0:
-        target_verts = list(range(len(ctrl.mesh.vertices)))
-
-    target_vg_names = {vg.name for vg in ctrl.obj.vertex_groups}
-    ok, reason = data_ops.validate_bone_compatibility(clip_data, target_vg_names, clip_kind)
-    if not ok:
-        raise ValueError(reason)
-
-    paste_kind = clip_kind
-    paste_data = clip_data
-
-    # ทำการแปลงโครงสร้างค่าน้ำหนักข้ามโหมดหากความต้องการประเภทไม่ตรงกับคลิปบอร์ด
-    if clip_kind == 'WEIGHT' and force_mask_target:
-        paste_kind = 'MASK'
-        paste_data = _convert_weight_to_mask(paste_data, ctrl)
-    elif clip_kind == 'MASK' and not force_mask_target:
-        paste_kind = 'WEIGHT'
-        paste_data = _convert_mask_to_weight(paste_data, ctrl)
-
-    current_mesh_name = ctrl.mesh.name
-    if paste_kind == 'WEIGHT':
-        resolved = data_ops.resolve_paste_targets_weight(paste_data, target_verts, source_mesh_name, current_mesh_name)
-        _merge_weight_paste(ctrl, resolved, mode)
-    else:
-        resolved = data_ops.resolve_paste_targets_mask(paste_data, target_verts, source_mesh_name, current_mesh_name)
-        _merge_mask_paste(ctrl, resolved, mode)
-
-    ctrl._finish(color_only=False)
-    return {"status": "FINISHED"}
-
 
 # ═════════════════════════════════════════════════════════════════════════
-#  🔄 AUTOMATIC PIPELINE (ดั้งเดิม คุมความฉลาดของฝั่ง Vertex ส่วนล่าง)
+#  Shared Clipboard Manager
 # ═════════════════════════════════════════════════════════════════════════
 
 class ClipboardManager:
@@ -130,11 +28,16 @@ class ClipboardManager:
 
 _clipboard_manager = ClipboardManager()
 
-def copy(ctrl) -> dict:
+
+# ═════════════════════════════════════════════════════════════════════════
+#  Shared implementation functions
+# ═════════════════════════════════════════════════════════════════════════
+
+def _copy_impl(ctrl, is_mask: bool) -> dict:
+    """Copy the active layer or mask to the clipboard, returning the captured data."""
     clip_mgr = _clipboard_manager
-    all_verts_count = len(ctrl.mesh.vertices)
     selected = ctrl._selected_verts()
-    is_mask = ctrl._is_mask_context()
+    all_verts_count = len(ctrl.mesh.vertices)
 
     if len(selected) == 0 or len(selected) == all_verts_count:
         if is_mask:
@@ -158,11 +61,12 @@ def copy(ctrl) -> dict:
     clip_mgr.set_clipboard(kind, subset, ctrl.mesh.name)
     return clip_mgr.get_clipboard()
 
-def cut(ctrl) -> dict:
-    clip = copy(ctrl)
-    is_mask = ctrl._is_mask_context()
-    all_verts_count = len(ctrl.mesh.vertices)
+
+def _cut_impl(ctrl, is_mask: bool) -> dict:
+    """Copy to clipboard, then clear source data from the active layer/mask."""
+    clip = _copy_impl(ctrl, is_mask)
     selected = ctrl._selected_verts()
+    all_verts_count = len(ctrl.mesh.vertices)
 
     if len(selected) == 0 or len(selected) == all_verts_count:
         if is_mask:
@@ -183,7 +87,9 @@ def cut(ctrl) -> dict:
     ctrl._finish(color_only=False)
     return clip
 
-def paste(ctrl, mode: str = 'REPLACE') -> dict:
+
+def _paste_impl(ctrl, mode: str, is_mask_target: bool) -> dict:
+    """Paste clipboard data into the active layer or mask, using the given mode."""
     clip_mgr = _clipboard_manager
     if not clip_mgr.has_clipboard():
         raise ValueError("Clipboard is empty — copy or cut first")
@@ -202,7 +108,6 @@ def paste(ctrl, mode: str = 'REPLACE') -> dict:
     if not ok:
         raise ValueError(reason)
 
-    is_mask_target = ctrl._is_mask_context()
     paste_kind = clip_kind
     paste_data = clip_data
 
@@ -216,16 +121,58 @@ def paste(ctrl, mode: str = 'REPLACE') -> dict:
     current_mesh_name = ctrl.mesh.name
     if paste_kind == 'WEIGHT':
         resolved = data_ops.resolve_paste_targets_weight(paste_data, target_verts, source_mesh_name, current_mesh_name)
-    else:
-        resolved = data_ops.resolve_paste_targets_mask(paste_data, target_verts, source_mesh_name, current_mesh_name)
-
-    if paste_kind == 'WEIGHT':
         _merge_weight_paste(ctrl, resolved, mode)
     else:
+        resolved = data_ops.resolve_paste_targets_mask(paste_data, target_verts, source_mesh_name, current_mesh_name)
         _merge_mask_paste(ctrl, resolved, mode)
 
     ctrl._finish(color_only=False)
     return {"status": "FINISHED"}
+
+
+# ═════════════════════════════════════════════════════════════════════════
+#  Public API — Automatic Pipeline (context-driven)
+# ═════════════════════════════════════════════════════════════════════════
+
+def copy(ctrl) -> dict:
+    """Copy active layer or mask data based on UI context."""
+    return _copy_impl(ctrl, ctrl._is_mask_context())
+
+
+def cut(ctrl) -> dict:
+    """Cut active layer or mask data based on UI context."""
+    return _cut_impl(ctrl, ctrl._is_mask_context())
+
+
+def paste(ctrl, mode: str = 'REPLACE') -> dict:
+    """Paste clipboard data into the target determined by UI context."""
+    return _paste_impl(ctrl, mode, ctrl._is_mask_context())
+
+
+# ═════════════════════════════════════════════════════════════════════════
+#  Public API — Manual Pipeline (enum-driven from Clipboard Manager UI)
+# ═════════════════════════════════════════════════════════════════════════
+
+def copy_data_manual(ctrl, action: str = 'COPY') -> dict:
+    """Copy or cut data from the data type selected in the Clipboard Manager UI."""
+    prefs = ctrl.context.window_manager.superskin_clipboard_prefs
+    is_mask = (prefs.target_data_type == 'LAYER')
+
+    if action == 'CUT':
+        return _cut_impl(ctrl, is_mask)
+    return _copy_impl(ctrl, is_mask)
+
+
+def paste_data_manual(ctrl, mode: str = 'REPLACE') -> dict:
+    """Paste clipboard data into the data type selected in the Clipboard Manager UI."""
+    prefs = ctrl.context.window_manager.superskin_clipboard_prefs
+    is_mask_target = (prefs.target_data_type == 'LAYER')
+    return _paste_impl(ctrl, mode, is_mask_target)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+#  Selection helpers
+# ═════════════════════════════════════════════════════════════════════════
 
 def select_affected(ctrl) -> set:
     if ctrl._is_mask_context():
@@ -237,6 +184,11 @@ def select_affected(ctrl) -> set:
     active_name = ctrl.obj.vertex_groups[active_id].name
     layer_dict = ctrl.storage.read_active_layer_dict()
     return data_ops.vertices_with_weight(layer_dict, active_name)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+#  Conversion helpers
+# ═════════════════════════════════════════════════════════════════════════
 
 def _convert_weight_to_mask(weight_data: dict, ctrl) -> dict:
     active_vg_id = ctrl._active_vg_id()
@@ -257,6 +209,11 @@ def _convert_mask_to_weight(mask_data: dict, ctrl) -> dict:
     for v, val in mask_data.items():
         result[v] = {active_bone_name: float(val)}
     return result
+
+
+# ═════════════════════════════════════════════════════════════════════════
+#  Merge helpers
+# ═════════════════════════════════════════════════════════════════════════
 
 def _merge_weight_paste(ctrl, resolved: dict[int, dict[str, float]], mode: str = 'REPLACE'):
     layer_dict = {int(k): v for k, v in ctrl.storage.read_active_layer_dict().items()}

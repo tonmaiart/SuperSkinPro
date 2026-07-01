@@ -40,11 +40,6 @@ class CoreFacade(ReadFacadeMixin, WriteFacadeMixin, VisualizerFacadeMixin):
     Sub-modules (layer_crud, pipeline, operations) accept CoreFacade as ctrl.
     """
 
-    # Class-level caches — persist across operator invocations.
-    # Invalidated implicitly when mesh identity or VG/edge count changes.
-    _mapping_cache: dict = {}   # {(id(mesh), vg_count): (bone_to_id, id_to_bone)}
-    _neighbor_cache: dict = {}  # {(id(mesh), edge_count): neighbors}
-
     def __init__(self, context):
         from ..shaders.shader_manager import ShaderManager
         from ..layer_storage.storage_service import LayerStorageService
@@ -97,34 +92,6 @@ class CoreFacade(ReadFacadeMixin, WriteFacadeMixin, VisualizerFacadeMixin):
         return self._layer_mgr.active_layer_name(
             self.storage.read_meta_list(), self.active_layer_index
         )
-
-    # ── Local ID mapping (class-level cache) ─────────────────────────
-
-    def _local_mapping(self) -> tuple[dict[str, int], dict[int, str]]:
-        vg_count = len(self.obj.vertex_groups)
-        cache_key = (id(self.mesh), vg_count)
-        cached = self.__class__._mapping_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        result = self.storage.get_local_mapping(self.obj)
-        self.__class__._mapping_cache[cache_key] = result
-        return result
-
-    # ── Cached mesh neighbors (class-level cache) ─────────────────────
-
-    def _cached_mesh_neighbors(self) -> dict:
-        edge_count = len(self.mesh.edges)
-        cache_key = (id(self.mesh), edge_count)
-        cached = self.__class__._neighbor_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        raw_neighbors = self.storage.build_mesh_neighbors()
-        ffi_compatible = {
-            int(v_idx): [int(node) for node in nodes]
-            for v_idx, nodes in raw_neighbors.items()
-        }
-        self.__class__._neighbor_cache[cache_key] = ffi_compatible
-        return ffi_compatible
 
     # ── Internal helpers ──────────────────────────────────────────────
 
@@ -345,5 +312,5 @@ class CoreFacade(ReadFacadeMixin, WriteFacadeMixin, VisualizerFacadeMixin):
 
     @classmethod
     def get_clipboard_data_ops(cls):
-        from ...core_subsystems.layer_manager import data_operations
+        from ...core_subsystems.layer_compositor import data_operations
         return data_operations

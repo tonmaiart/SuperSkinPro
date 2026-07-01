@@ -95,53 +95,13 @@ def register():
         type=SSPrefMultiColorPreview, options={'SKIP_SAVE'},
     )
     UnifiedRegistry.register(MultiColorPreviewFeature())
-    # Backward-compat: also register with legacy registries during migration
-    _register_legacy()
 
 
 def unregister():
     """Unregister PropertyGroup and the extension."""
-    _unregister_legacy()
     UnifiedRegistry.unregister("multi_color_preview")
     try:
         del bpy.types.WindowManager.superskin_multi_color_preview_prefs
     except Exception:
         pass
     bpy.utils.unregister_class(SSPrefMultiColorPreview)
-
-
-def _register_legacy():
-    """Register with legacy registries for backward compatibility during migration."""
-    try:
-        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
-
-        # Legacy BaseDomain registration
-        class _MultiColorPreviewDomain(BaseDomain):
-            def get_id(self): return "multi_color_preview"
-            def get_actions(self): return ["start_multi_color", "stop_multi_color", "toggle_multi_color"]
-            def execute(self, action, context, core_facade):
-                return MultiColorPreviewFeature().execute(action, context, core_facade)
-        DomainRegistry.register(_MultiColorPreviewDomain())
-
-        # Legacy PrefsExtensionSpec registration
-        PrefsExtensionRegistry.register(PrefsExtensionSpec(
-            json_key="multi_color_preview",
-            json_path=("multi_color_preview",),
-            section_title="Multi Color Preview",
-            draw_tab='PREFERENCE',
-            draw_section_fn=lambda layout: None,
-            populate_fn=MultiColorPreviewFeature().populate,
-            serialize_into_fn=MultiColorPreviewFeature().serialize_into,
-            defaults_path=_DEFAULTS_PATH,
-        ))
-    except Exception:
-        pass
-
-
-def _unregister_legacy():
-    """Remove from legacy registries."""
-    try:
-        from ...interface.registry import PrefsExtensionRegistry
-        PrefsExtensionRegistry.unregister("multi_color_preview")
-    except Exception:
-        pass

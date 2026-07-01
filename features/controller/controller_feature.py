@@ -54,28 +54,10 @@ class ControllerFeature(UnifiedFeatureExtension):
 # ==============================================================================
 
 def register():
-    """Register the feature with UnifiedRegistry and legacy DomainRegistry."""
+    """Register the feature with UnifiedRegistry."""
     UnifiedRegistry.register(ControllerFeature())
-    _register_legacy()
 
 
 def unregister():
     """Unregister the feature from UnifiedRegistry."""
-    # No PrefsExtensionSpec to unregister for this domain
     UnifiedRegistry.unregister("controller")
-
-
-def _register_legacy():
-    """Register with legacy DomainRegistry for backward compat during migration."""
-    try:
-        from ...interface.registry import DomainRegistry, BaseDomain
-
-        # Legacy BaseDomain registration
-        class _ControllerDomain(BaseDomain):
-            def get_id(self): return "controller"
-            def get_actions(self): return []
-            def execute(self, action, context, core_facade):
-                return {"status": "CANCELLED"}
-        DomainRegistry.register(_ControllerDomain())
-    except Exception:
-        pass

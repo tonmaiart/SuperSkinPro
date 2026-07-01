@@ -7,12 +7,11 @@ All UIList, adapter, and operator classes are registered from ui.py.
 
 from importlib import reload
 
-from . import prefs
 from . import ops
 from . import ui
 from . import deform_bone_viewer_feature
 
-for mod in (prefs, ops, ui, deform_bone_viewer_feature):
+for mod in (ops, ui, deform_bone_viewer_feature):
     try:
         reload(mod)
     except Exception:
@@ -22,12 +21,10 @@ for mod in (prefs, ops, ui, deform_bone_viewer_feature):
 def register():
     ops.register()
     ui.register()
-    prefs.register()
     deform_bone_viewer_feature.register()
 
 
 def unregister():
     deform_bone_viewer_feature.unregister()
-    prefs.unregister()
     ui.unregister()
     ops.unregister()

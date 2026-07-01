@@ -107,19 +107,17 @@ _classes = (SSPrefCircleToolAdjust,)
 
 
 def register():
-    """Register PropertyGroup on WindowManager and the extension with all registries."""
+    """Register PropertyGroup on WindowManager and the extension with UnifiedRegistry."""
     for cls in _classes:
         bpy.utils.register_class(cls)
     bpy.types.WindowManager.superskin_circle_tool_adjust_prefs = bpy.props.PointerProperty(
         type=SSPrefCircleToolAdjust, options={'SKIP_SAVE'},
     )
     UnifiedRegistry.register(CircleToolAdjustFeature())
-    _register_legacy()
 
 
 def unregister():
     """Unregister PropertyGroup and the extension."""
-    _unregister_legacy()
     UnifiedRegistry.unregister("circle_tool_adjust")
     try:
         del bpy.types.WindowManager.superskin_circle_tool_adjust_prefs
@@ -127,40 +125,3 @@ def unregister():
         pass
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)
-
-
-def _register_legacy():
-    """Register with legacy registries for backward compatibility during migration."""
-    try:
-        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
-
-        # Legacy BaseDomain registration
-        class _CircleToolAdjustDomain(BaseDomain):
-            def get_id(self): return "circle_tool_adjust"
-            def get_actions(self): return ["adjust_radius_interactive"]
-            def execute(self, action, context, core_facade):
-                return CircleToolAdjustFeature().execute(action, context, core_facade)
-        DomainRegistry.register(_CircleToolAdjustDomain())
-
-        # Legacy PrefsExtensionSpec registration
-        PrefsExtensionRegistry.register(PrefsExtensionSpec(
-            json_key="circle_tool_adjust",
-            json_path=("circle_tool_adjust",),
-            section_title="Circle Brush Adjust",
-            draw_tab='SKINNING',
-            draw_section_fn=lambda layout: CircleToolAdjustFeature().draw_section(layout, bpy.context),
-            populate_fn=CircleToolAdjustFeature().populate,
-            serialize_into_fn=CircleToolAdjustFeature().serialize_into,
-            defaults_path=_DEFAULTS_PATH,
-        ))
-    except Exception:
-        pass
-
-
-def _unregister_legacy():
-    """Remove from legacy registries."""
-    try:
-        from ...interface.registry import PrefsExtensionRegistry
-        PrefsExtensionRegistry.unregister("circle_tool_adjust")
-    except Exception:
-        pass

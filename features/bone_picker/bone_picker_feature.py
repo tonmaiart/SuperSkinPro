@@ -15,7 +15,6 @@ import os
 
 from ...interface.registry.register_api import UnifiedFeatureExtension, UnifiedRegistry
 from ...core.facade import CoreFacade
-from . import draw as _draw
 
 _DEFAULTS_PATH = os.path.join(os.path.dirname(__file__), "default_config.json")
 
@@ -130,7 +129,7 @@ class BonePickerFeature(UnifiedFeatureExtension):
             if action == "start_bone_picker":
                 pass
             elif action == "stop_bone_picker":
-                _draw.stop_bone_picker_draw()
+                pass
             elif action == "clear_multi_selection":
                 obj = core_facade.get_obj()
                 storage = getattr(obj, "superskin_storage", None)
@@ -228,53 +227,13 @@ def register():
         type=SSPrefBonePicker, options={'SKIP_SAVE'},
     )
     UnifiedRegistry.register(BonePickerFeature())
-    # Backward-compat: also register with legacy registries during migration
-    _register_legacy()
 
 
 def unregister():
     """Unregister PropertyGroup and the extension."""
-    _unregister_legacy()
     UnifiedRegistry.unregister("bone_picker")
     try:
         del bpy.types.WindowManager.superskin_bone_picker_prefs
     except Exception:
         pass
     bpy.utils.unregister_class(SSPrefBonePicker)
-
-
-def _register_legacy():
-    """Register with legacy registries for backward compatibility during migration."""
-    try:
-        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
-
-        # Legacy BaseDomain registration
-        class _BonePickerDomain(BaseDomain):
-            def get_id(self): return "bone_picker"
-            def get_actions(self): return ["start_bone_picker", "stop_bone_picker", "clear_multi_selection"]
-            def execute(self, action, context, core_facade):
-                return BonePickerFeature().execute(action, context, core_facade)
-        DomainRegistry.register(_BonePickerDomain())
-
-        # Legacy PrefsExtensionSpec registration
-        PrefsExtensionRegistry.register(PrefsExtensionSpec(
-            json_key="bone_picker",
-            json_path=("customize", "bone_picker"),
-            section_title="Bone Picker",
-            draw_tab='PREFERENCE',
-            draw_section_fn=lambda layout: BonePickerFeature().draw_section(layout, bpy.context),
-            populate_fn=BonePickerFeature().populate,
-            serialize_into_fn=BonePickerFeature().serialize_into,
-            defaults_path=_DEFAULTS_PATH,
-        ))
-    except Exception:
-        pass
-
-
-def _unregister_legacy():
-    """Remove from legacy registries."""
-    try:
-        from ...interface.registry import PrefsExtensionRegistry
-        PrefsExtensionRegistry.unregister("bone_picker")
-    except Exception:
-        pass

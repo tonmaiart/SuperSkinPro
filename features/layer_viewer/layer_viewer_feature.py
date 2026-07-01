@@ -71,50 +71,10 @@ class LayerViewerFeature(UnifiedFeatureExtension):
 # ==============================================================================
 
 def register():
-    """Register the feature with UnifiedRegistry and legacy registries."""
+    """Register the feature with UnifiedRegistry."""
     UnifiedRegistry.register(LayerViewerFeature())
-    _register_legacy()
 
 
 def unregister():
-    """Unregister the feature from UnifiedRegistry and legacy registries."""
-    _unregister_legacy()
+    """Unregister the feature from UnifiedRegistry."""
     UnifiedRegistry.unregister("layer_viewer")
-
-
-def _register_legacy():
-    """Register with legacy DomainRegistry and PrefsExtensionSpec for backward compat."""
-    try:
-        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
-
-        # Legacy BaseDomain registration
-        class _LayerViewerDomain(BaseDomain):
-            def get_id(self): return "layer_viewer"
-            def get_actions(self): return []
-            def execute(self, action, context, core_facade):
-                return {"status": "CANCELLED"}
-        DomainRegistry.register(_LayerViewerDomain())
-
-        # Legacy PrefsExtensionSpec registration (collapsible=False)
-        PrefsExtensionRegistry.register(PrefsExtensionSpec(
-            json_key="layer_viewer",
-            json_path=("layer_viewer",),
-            section_title="Layers Management",
-            draw_tab="LAYER",
-            draw_section_fn=lambda layout: LayerViewerFeature().draw_section(layout, bpy.context),
-            populate_fn=lambda data: None,
-            serialize_into_fn=lambda full_dict: None,
-            defaults_path=_DEFAULTS_PATH,
-            collapsible=False,
-        ))
-    except Exception:
-        pass
-
-
-def _unregister_legacy():
-    """Remove from legacy PrefsExtensionRegistry."""
-    try:
-        from ...interface.registry import PrefsExtensionRegistry
-        PrefsExtensionRegistry.unregister("layer_viewer")
-    except Exception:
-        pass

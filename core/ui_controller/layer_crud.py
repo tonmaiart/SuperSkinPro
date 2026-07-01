@@ -6,6 +6,7 @@ Every function takes the UIController instance as its first parameter (``ctrl``)
 import bpy
 from .undo_manager import skin_transaction
 from . import pipeline as _pipeline
+from ...core_subsystems.topology_cache_manager import TopologyCacheManager
 
 
 def create_layer(ctrl, name: str) -> int:
@@ -182,7 +183,7 @@ def _bake_and_reload_temp_vgs(ctrl, new_layer_index: int):
 
         new_layer_dict = ctrl.storage.read_layer_dict(new_layer_index)
         new_mask_dict = ctrl.storage.read_mask_dict(new_layer_index)
-        _, id_to_bone = ctrl._local_mapping()
+        _, id_to_bone = TopologyCacheManager.get_local_mapping(ctrl.obj, ctrl.storage)
         load_layer_to_temp_vgs(
             obj,
             new_layer_dict,

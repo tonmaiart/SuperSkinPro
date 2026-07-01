@@ -40,9 +40,6 @@ from . import license_gateway
 
 # ── Legacy packages (retained pending migration) ───────────────────────────
 from . import preferences
-from . import license
-from . import layer_manager
-from . import orphan_resolver
 
 # Reload order: encapsulated packages first (rust_weight_engine is a
 # dependency of layer_compositor, topology_cache_manager, and license_gateway),
@@ -56,9 +53,6 @@ _encapsulated = (
 )
 _legacy_packages = (
     preferences,
-    license,
-    layer_manager,
-    orphan_resolver,
 )
 
 for mod in (*_encapsulated, *_legacy_packages):

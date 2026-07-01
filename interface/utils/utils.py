@@ -17,7 +17,7 @@ from ...core_subsystems.topology_cache_manager import TopologyCacheManager
 from ...core.layer_storage.storage_service import LayerStorageService
 from ...core_subsystems.rust_weight_engine import RustWeightEngine
 from ...core.bone_identity import BoneIdentityService
-# LayerManager kept function-scoped in sync_bones_to_ui_collection —
+# LayerCompositor kept function-scoped in sync_bones_to_ui_collection —
 # hoisting it triggers a circular import through core_subsystems → features → ui.utils.
 
 
@@ -315,7 +315,7 @@ def sync_bones_to_ui_collection(obj):
     this refactor — baking it in here would mean switching the filter mode
     wouldn't visibly update the list until the next depsgraph tick.
 
-    Hoisted imports: BoneIdentityService, LayerStorageService, LayerManager
+    Hoisted imports: BoneIdentityService, LayerStorageService, LayerCompositor
     (were function-scoped, absolute 'SuperSkinPro' references at lines 309, 329-330).
     """
     if not obj or obj.type != 'MESH':
@@ -339,10 +339,10 @@ def sync_bones_to_ui_collection(obj):
         active_vg_name = vg_list[storage.last_clicked_index].name
 
     try:
-        from ...core_subsystems.layer_manager.layer_manager import LayerManager
+        from ...core_subsystems.layer_compositor import LayerCompositor
         _sto = LayerStorageService(obj.data)
         _meta = _sto.read_meta_list()
-        locks = LayerManager().get_bone_locks(_meta, _sto.get_active_layer_index())
+        locks = LayerCompositor.get_bone_locks(_meta, _sto.get_active_layer_index())
     except Exception:
         locks = {}
 

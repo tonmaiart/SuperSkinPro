@@ -5,7 +5,7 @@ code; this file holds only the buttons' operator logic).
 
 import bpy
 from ..core_subsystems.preferences.preferences_service import PreferencesService
-from ..core_subsystems.license import LicenseService
+from ..core_subsystems.license_gateway import LicenseGateway
 
 
 class SUPERSKIN_OT_reset_prefs(bpy.types.Operator):
@@ -136,7 +136,7 @@ class SUPERSKIN_OT_activate_license(bpy.types.Operator):
             self.report({'WARNING'}, "Enter a license key first")
             return {'CANCELLED'}
 
-        success, message = LicenseService.activate(key)
+        success, message = LicenseGateway.activate(key)
         self.report({'INFO'} if success else {'WARNING'}, message)
         return {'FINISHED'}
 

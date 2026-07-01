@@ -14,6 +14,15 @@ from ...core.facade import CoreFacade
 #  Normalization helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _call_norm_rust(gateway_tag: str, fn_name: str, v_weights, *args):
+    """Call a Rust normalization function and update *v_weights* in-place with the result."""
+    rust = CoreFacade.get_rust_gateway(gateway_tag)
+    result = rust.call(fn_name, v_weights, *args)
+    v_weights.clear()
+    v_weights.update(result)
+    return v_weights
+
+
 def normalize_around_active(v_weights, active_vg_id, locks, active_layer_idx=0):
     """Normalize so unlocked weights sum to 1.0 - lock_total using Integer Bone IDs.
 
@@ -23,26 +32,19 @@ def normalize_around_active(v_weights, active_vg_id, locks, active_layer_idx=0):
         locks: ``{bone_id: bool}`` — True when the group is locked.
         active_layer_idx: layer index (0 = base).
     """
-    rust = CoreFacade.get_rust_gateway("norm_around_active")
-    result = rust.call(
+    return _call_norm_rust(
+        "norm_around_active",
         "rust_norm_around_active",
         v_weights,
         active_vg_id,
         locks,
         active_layer_idx,
     )
-    v_weights.clear()
-    v_weights.update(result)
-    return v_weights
 
 
 def normalize_all_unlocked(v_weights, locks):
     """Scale every unlocked weight proportionally so they sum to 1.0 - lock_total."""
-    rust = CoreFacade.get_rust_gateway("norm_all_unlocked")
-    result = rust.call("rust_norm_all_unlocked", v_weights, locks)
-    v_weights.clear()
-    v_weights.update(result)
-    return v_weights
+    return _call_norm_rust("norm_all_unlocked", "rust_norm_all_unlocked", v_weights, locks)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -210,53 +210,13 @@ def register():
         type=SSPrefWeightApply, options={'SKIP_SAVE'},
     )
     UnifiedRegistry.register(WeightApplyFeature())
-    # Backward-compat: also register with legacy registries during migration
-    _register_legacy()
 
 
 def unregister():
     """Unregister PropertyGroups and the extension."""
-    _unregister_legacy()
     UnifiedRegistry.unregister("weight_apply")
     try:
         del bpy.types.WindowManager.superskin_weight_apply_prefs
     except Exception:
         pass
     bpy.utils.unregister_class(SSPrefWeightApply)
-
-
-def _register_legacy():
-    """Register with legacy registries for backward compatibility during migration."""
-    try:
-        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
-
-        # Legacy BaseDomain registration
-        class _WeightApplyDomain(BaseDomain):
-            def get_id(self): return "weight_apply"
-            def get_actions(self): return WeightApplyFeature().get_actions()
-            def execute(self, action, context, core_facade):
-                return WeightApplyFeature().execute(action, context, core_facade)
-        DomainRegistry.register(_WeightApplyDomain())
-
-        # Legacy PrefsExtensionSpec registration
-        PrefsExtensionRegistry.register(PrefsExtensionSpec(
-            json_key="weight_apply",
-            json_path=("weight_apply",),
-            section_title="Apply",
-            draw_tab='SKINNING',
-            draw_section_fn=lambda layout: WeightApplyFeature().draw_section(layout, bpy.context),
-            populate_fn=WeightApplyFeature().populate,
-            serialize_into_fn=WeightApplyFeature().serialize_into,
-            defaults_path=_DEFAULTS_PATH,
-        ))
-    except Exception:
-        pass
-
-
-def _unregister_legacy():
-    """Remove from legacy registries."""
-    try:
-        from ...interface.registry import PrefsExtensionRegistry
-        PrefsExtensionRegistry.unregister("weight_apply")
-    except Exception:
-        pass

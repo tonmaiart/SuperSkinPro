@@ -14,12 +14,10 @@ from . import layer_storage
 from . import ui_controller
 from . import preferences
 from . import bone_identity
-from ..core_subsystems import orphan_resolver
 
 for mod in (prop_callbacks, data_models,
             shaders, layer_storage,
-            ui_controller, preferences, bone_identity,
-            orphan_resolver):
+            ui_controller, preferences, bone_identity):
     try:
         reload(mod)
     except Exception:
@@ -33,11 +31,9 @@ def register():
     ui_controller.register()
     preferences.register()
     bone_identity.register()
-    orphan_resolver.register()
 
 
 def unregister():
-    orphan_resolver.unregister()
     bone_identity.unregister()
     preferences.unregister()
     ui_controller.unregister()

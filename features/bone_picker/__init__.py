@@ -1,12 +1,11 @@
 from importlib import reload
 
 from . import ops
-from . import draw
 from . import deform_overlay
 from . import keymap
 from . import bone_picker_feature
 
-for mod in (ops, draw, deform_overlay, keymap, bone_picker_feature):
+for mod in (ops, deform_overlay, keymap, bone_picker_feature):
     try:
         reload(mod)
     except Exception:
@@ -22,6 +21,5 @@ def register():
 def unregister():
     keymap.unregister()
     deform_overlay.cleanup()
-    draw.cleanup()
     ops.unregister()
     bone_picker_feature.unregister()

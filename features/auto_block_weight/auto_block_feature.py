@@ -104,49 +104,10 @@ class AutoBlockFeature(UnifiedFeatureExtension):
 # ==============================================================================
 
 def register():
-    """Register with UnifiedRegistry and legacy registries for backward compat."""
+    """Register with UnifiedRegistry."""
     UnifiedRegistry.register(AutoBlockFeature())
-    _register_legacy()
 
 
 def unregister():
-    """Unregister from all registries."""
-    _unregister_legacy()
+    """Unregister from UnifiedRegistry."""
     UnifiedRegistry.unregister("auto_block")
-
-
-def _register_legacy():
-    """Register with legacy registries for backward compatibility during migration."""
-    try:
-        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
-
-        # Legacy BaseDomain registration
-        class _AutoBlockDomain(BaseDomain):
-            def get_id(self): return "auto_block"
-            def get_actions(self): return ["auto"]
-            def execute(self, action, context, core_facade):
-                return AutoBlockFeature().execute(action, context, core_facade)
-        DomainRegistry.register(_AutoBlockDomain())
-
-        # Legacy PrefsExtensionSpec registration
-        PrefsExtensionRegistry.register(PrefsExtensionSpec(
-            json_key="auto_block_weight",
-            json_path=("auto_block_weight",),
-            section_title="Auto Assign",
-            draw_tab='SKINNING',
-            draw_section_fn=ui.draw_section,
-            populate_fn=lambda data: None,
-            serialize_into_fn=lambda d: None,
-            defaults_path=_DEFAULTS_PATH,
-        ))
-    except Exception:
-        pass
-
-
-def _unregister_legacy():
-    """Remove from legacy registries."""
-    try:
-        from ...interface.registry import PrefsExtensionRegistry
-        PrefsExtensionRegistry.unregister("auto_block_weight")
-    except Exception:
-        pass

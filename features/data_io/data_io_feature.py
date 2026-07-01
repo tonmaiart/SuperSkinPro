@@ -47,7 +47,7 @@ class DataIOFeature(UnifiedFeatureExtension):
     # ── Configuration (class attributes) ───────────────────────────────────
 
     domain_id = "data_io"
-    actions = ["export_weight", "import_weight"]
+    actions = []
     section_title = "Export/Import Weight JSON"
     draw_tab = "LAYER"
     defaults_path = _DEFAULTS_PATH
@@ -55,63 +55,6 @@ class DataIOFeature(UnifiedFeatureExtension):
     # ── Action dispatch ───────────────────────────────────────────────────
 
     def execute(self, action: str, context, core_facade: CoreFacade) -> dict:
-        from .logic import WeightIOProcessor
-
-        wm = context.window_manager
-        prefs = getattr(wm, "superskin_data_io_prefs", None)
-        filepath = wm.get("superskin_io_filepath", "")
-
-        # If action is empty, read from window manager
-        if not action:
-            action = wm.get("superskin_io_action", "")
-
-        if not filepath:
-            return {"status": "CANCELLED"}
-
-        if action == "export_weight":
-            print(f"[Weight IO] Exporting weights to: {filepath}")
-
-            layer_dict = core_facade.get_active_layer_dict()
-            success = WeightIOProcessor.export_to_json(filepath, layer_dict)
-            if success:
-                core_facade.show_toast(f"Exported successfully: {os.path.basename(filepath)}")
-                return {"status": "FINISHED"}
-            core_facade.show_toast("Export failed")
-            return {"status": "CANCELLED"}
-
-        elif action == "import_weight":
-            print(f"[Weight IO] Importing weights from: {filepath}")
-
-            imported_dict = WeightIOProcessor.import_from_json(filepath)
-
-            if imported_dict is None:
-                core_facade.show_toast("Failed to import: Invalid format or file not found")
-                return {"status": "CANCELLED"}
-
-            clear_unmapped = getattr(prefs, "clear_unmapped_bones", False)
-
-            if clear_unmapped:
-                current_layer = core_facade.get_active_layer_dict()
-
-                for v_idx, current_bones in current_layer.items():
-                    imported_bones_dict = imported_dict.get(v_idx, {})
-                    imported_bones = set(imported_bones_dict.keys())
-
-                    if v_idx not in imported_dict:
-                        imported_dict[v_idx] = {}
-                    elif not imported_bones:
-                        imported_dict[v_idx] = {}
-                    else:
-                        current_bones_set = set(current_bones.keys())
-                        for bone in current_bones_set - imported_bones:
-                            if v_idx in imported_dict and bone in imported_dict[v_idx]:
-                                del imported_dict[v_idx][bone]
-
-            core_facade.write_layer_dict(imported_dict)
-            core_facade.finish()
-            core_facade.show_toast(f"Imported successfully: {os.path.basename(filepath)}")
-            return {"status": "FINISHED"}
-
         return {"status": "CANCELLED"}
 
     # ── UI layout ─────────────────────────────────────────────────────────
@@ -170,53 +113,13 @@ def register():
         type=SSPrefWeightIO, options={'SKIP_SAVE'},
     )
     UnifiedRegistry.register(DataIOFeature())
-    # Backward-compat: also register with legacy registries during migration
-    _register_legacy()
 
 
 def unregister():
     """Unregister PropertyGroups and the extension."""
-    _unregister_legacy()
     UnifiedRegistry.unregister("data_io")
     try:
         del bpy.types.WindowManager.superskin_data_io_prefs
     except Exception:
         pass
     bpy.utils.unregister_class(SSPrefWeightIO)
-
-
-def _register_legacy():
-    """Register with legacy registries for backward compatibility during migration."""
-    try:
-        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
-
-        # Legacy BaseDomain registration
-        class _WeightIODomain(BaseDomain):
-            def get_id(self): return "data_io"
-            def get_actions(self): return DataIOFeature().get_actions()
-            def execute(self, action, context, core_facade):
-                return DataIOFeature().execute(action, context, core_facade)
-        DomainRegistry.register(_WeightIODomain())
-
-        # Legacy PrefsExtensionSpec registration
-        PrefsExtensionRegistry.register(PrefsExtensionSpec(
-            json_key="data_io",
-            json_path=("data_io",),
-            section_title="Export/Import Weight JSON",
-            draw_tab='LAYER',
-            draw_section_fn=lambda layout: DataIOFeature().draw_section(layout, bpy.context),
-            populate_fn=DataIOFeature().populate,
-            serialize_into_fn=DataIOFeature().serialize_into,
-            defaults_path=_DEFAULTS_PATH,
-        ))
-    except Exception:
-        pass
-
-
-def _unregister_legacy():
-    """Remove from legacy registries."""
-    try:
-        from ...interface.registry import PrefsExtensionRegistry
-        PrefsExtensionRegistry.unregister("data_io")
-    except Exception:
-        pass

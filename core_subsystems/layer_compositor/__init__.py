@@ -29,6 +29,7 @@ from importlib import reload
 from . import codec as _codec
 from . import healer as _healer
 from . import merge as _merge
+from . import data_operations as _data_operations
 from . import layer_compositor as _lc
 
 __all__ = ["LayerCompositor"]
@@ -38,7 +39,7 @@ from .layer_compositor import LayerCompositor
 # Cascading reload: codec first (no intra-package deps besides rust_weight_engine),
 # then healer (imports from codec), then merge (imports from codec),
 # then main class (imports from all three).
-for _mod in (_codec, _healer, _merge, _lc):
+for _mod in (_codec, _healer, _merge, _data_operations, _lc):
     try:
         reload(_mod)
     except Exception:

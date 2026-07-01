@@ -22,7 +22,7 @@ Each ``UnifiedFeatureExtension`` exposes ``draw_section(layout, context)``,
 
 import bpy
 
-from ..core_subsystems.license import LicenseService
+from ..core_subsystems.license_gateway import LicenseGateway
 
 
 # =========================================================================
@@ -240,7 +240,7 @@ def _draw_license(layout, prefs):
     lic = prefs.license
     box = layout.box()
 
-    limit = LicenseService.layer_limit()
+    limit = LicenseGateway.layer_limit()
     if limit is None:
         box.label(text="Status: Pro Activated", icon='CHECKMARK')
     else:

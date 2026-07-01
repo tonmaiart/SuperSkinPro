@@ -94,18 +94,15 @@ class LayerStorageService:
 
     # ── Mask Dict CRUD ───────────────────────────────────────────────
 
-    def read_active_mask_dict(self) -> dict:
-        idx = self.get_active_layer_index()
-        raw = self.mesh.get(f"ss_mask_{idx}")
-        mask = _LC.decode(raw) if raw else {}
+    @staticmethod
+    def _normalize_mask_entries(raw: dict) -> dict:
+        """Normalise legacy mask formats to clean ``{v_idx: float}``.
 
-        # Normalise legacy formats to clean {v_idx: float}.  v is coerced to
-        # int defensively (mirrors map_layer_to_int's int(v_idx)) — this dict
-        # is passed straight into Rust FFI (HashMap<i64, f64>), and a stray
-        # str key crashes with "'str' object cannot be interpreted as an
-        # integer".
+        Handles legacy ``{v: {bone: weight}}`` dict values, current
+        ``{v: float}``, and unknown types (defaults to 0.0).
+        """
         norm = {}
-        for v, w in mask.items():
+        for v, w in raw.items():
             if isinstance(w, dict):
                 norm[int(v)] = next(iter(w.values()), 0.0) if w else 0.0
             elif isinstance(w, (int, float)):
@@ -113,20 +110,18 @@ class LayerStorageService:
             else:
                 norm[int(v)] = 0.0
         return norm
+
+    def read_active_mask_dict(self) -> dict:
+        idx = self.get_active_layer_index()
+        raw = self.mesh.get(f"ss_mask_{idx}")
+        mask = _LC.decode(raw) if raw else {}
+        return self._normalize_mask_entries(mask)
 
     def read_mask_dict(self, layer_index: int) -> dict:
         """Decode and normalise the mask for *layer_index* to ``{v_idx: float}``."""
         raw = self.mesh.get(f"ss_mask_{layer_index}")
         mask = _LC.decode(raw) if raw else {}
-        norm = {}
-        for v, w in mask.items():
-            if isinstance(w, dict):
-                norm[int(v)] = next(iter(w.values()), 0.0) if w else 0.0
-            elif isinstance(w, (int, float)):
-                norm[int(v)] = float(w)
-            else:
-                norm[int(v)] = 0.0
-        return norm
+        return self._normalize_mask_entries(mask)
 
     def write_mask_dict(self, layer_index: int, mask_dict: dict):
         self.mesh[f"ss_mask_{layer_index}"] = _LC.encode(mask_dict)

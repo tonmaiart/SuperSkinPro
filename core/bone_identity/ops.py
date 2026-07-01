@@ -4,6 +4,9 @@ Selecting an orphan row sets active_orphan_name (not last_clicked_index,
 since orphan bones have no real vertex group). Weight ops read
 active_orphan_name via UIController._active_bone_name() and route through
 get_unified_mapping() synthetic IDs so Rust can process them normally.
+
+Relocated from core_subsystems/orphan_resolver/ops.py to eliminate a layering
+violation (core_subsystems must not register bpy.types.Operator classes).
 """
 
 import bpy

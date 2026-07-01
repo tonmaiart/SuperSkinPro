@@ -201,13 +201,10 @@ def register():
         type=SSPrefMirror, options={'SKIP_SAVE'},
     )
     UnifiedRegistry.register(MirrorFeature())
-    # Backward-compat: also register with legacy registries during migration
-    _register_legacy()
 
 
 def unregister():
     """Unregister PropertyGroups and the extension."""
-    _unregister_legacy()
     UnifiedRegistry.unregister("mirror")
     try:
         del bpy.types.WindowManager.superskin_mirror_prefs
@@ -217,38 +214,4 @@ def unregister():
     bpy.utils.unregister_class(SSPrefMirrorSRItem)
 
 
-def _register_legacy():
-    """Register with legacy registries for backward compatibility during migration."""
-    try:
-        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
 
-        # Legacy BaseDomain registration
-        class _MirrorDomain(BaseDomain):
-            def get_id(self): return "mirror"
-            def get_actions(self): return ["mirror"]
-            def execute(self, action, context, core_facade):
-                return MirrorFeature().execute(action, context, core_facade)
-        DomainRegistry.register(_MirrorDomain())
-
-        # Legacy PrefsExtensionSpec registration
-        PrefsExtensionRegistry.register(PrefsExtensionSpec(
-            json_key="mirror",
-            json_path=("mirror",),
-            section_title="Mirror",
-            draw_tab='SKINNING',
-            draw_section_fn=lambda layout: MirrorFeature().draw_section(layout, bpy.context),
-            populate_fn=MirrorFeature().populate,
-            serialize_into_fn=MirrorFeature().serialize_into,
-            defaults_path=_DEFAULTS_PATH,
-        ))
-    except Exception:
-        pass
-
-
-def _unregister_legacy():
-    """Remove from legacy registries."""
-    try:
-        from ...interface.registry import PrefsExtensionRegistry
-        PrefsExtensionRegistry.unregister("mirror")
-    except Exception:
-        pass

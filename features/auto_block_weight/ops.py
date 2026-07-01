@@ -1,7 +1,7 @@
 """Auto Block Weight operator — auto assign closest unlocked bone."""
 
 import bpy
-from ...interface.utils.op_exec import run_domain
+from ...interface.utils.op_exec import run_domain_via_unified
 
 
 class MESH_OT_auto_assign_closest_unlocked_bone(bpy.types.Operator):
@@ -15,7 +15,7 @@ class MESH_OT_auto_assign_closest_unlocked_bone(bpy.types.Operator):
             self.report({'WARNING'}, "Auto Assign is not available in Layers Management mode")
             return {'CANCELLED'}
 
-        return run_domain(context, "auto")
+        return run_domain_via_unified(context, "auto_block", "auto")
 
 
 def _menu_func(self, context):

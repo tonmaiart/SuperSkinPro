@@ -15,9 +15,7 @@ from ...interface.utils.utils import _is_valid_mesh
 
 # Hoisted from function bodies — converted from absolute 'SuperSkinPro.*'
 # imports to relative imports for Blender Extensions Platform compatibility.
-from ...core_subsystems.layer_manager.layer_manager import (
-    clear_all_selected, add_vg_selected,
-)
+from ...core_subsystems.layer_compositor import LayerCompositor
 from ...core.layer_storage.temp_vg_bridge import (
     read_temp_vgs_to_layer, delete_temp_vgs,
 )
@@ -166,8 +164,8 @@ class MESH_OT_show_affect_bone(bpy.types.Operator):
             if self.bone_name in obj.vertex_groups:
                 vg = obj.vertex_groups[self.bone_name]
                 storage = obj.superskin_storage
-                clear_all_selected(obj)
-                add_vg_selected(obj, self.bone_name)
+                LayerCompositor.clear_all_selected(obj)
+                LayerCompositor.add_vg_selected(obj, self.bone_name)
                 storage.selection_history = str(vg.index)
                 storage.last_clicked_index = vg.index
                 try:
@@ -293,8 +291,8 @@ class OBJECT_OT_mw_select_specific_vertex_group(bpy.types.Operator):
         if obj and self.group_name in obj.vertex_groups:
             vg = obj.vertex_groups[self.group_name]
             storage = obj.superskin_storage
-            clear_all_selected(obj)
-            add_vg_selected(obj, self.group_name)
+            LayerCompositor.clear_all_selected(obj)
+            LayerCompositor.add_vg_selected(obj, self.group_name)
             storage.selection_history = str(vg.index)
             storage.last_clicked_index = vg.index
             try:

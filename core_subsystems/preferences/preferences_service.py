@@ -12,7 +12,6 @@ from . import io
 
 # Hoisted from multiple classmethods — converted from absolute 'SuperSkinPro.*'
 # imports to relative imports for Blender Extensions Platform compatibility.
-from ...interface.registry.prefs_extension_registry import PrefsExtensionRegistry
 from ...interface.registry.register_api import UnifiedRegistry
 # MirrorPreferencesService kept function-scoped in mirror accessor methods —
 # hoisting it triggers loading the entire features package during core_subsystems
@@ -73,16 +72,6 @@ class PreferencesService:
         cls._populate_from_dict(prefs, merged)
 
         # Load each feature extension using its own default_config.json + user section.
-        # Legacy PrefsExtensionRegistry path
-        for spec in PrefsExtensionRegistry.get_all():
-            ext_defaults = io.load_json_safe(spec.defaults_path)
-            user_section = _get_nested(user, spec.json_path)
-            ext_data     = io.deep_merge(ext_defaults, user_section)
-            try:
-                spec.populate_fn(ext_data)
-            except Exception as e:
-                print(f"⚠️ [SuperSkinPro] Failed to load prefs for '{spec.json_key}': {e}")
-
         # UnifiedRegistry path
         for ext in UnifiedRegistry.get_all():
             defaults_path = ext.get_defaults_path()
@@ -110,13 +99,6 @@ class PreferencesService:
         prefs = bpy.context.window_manager.superskin_prefs
         data  = cls._dict_from_property_group(prefs)
 
-        # Legacy PrefsExtensionRegistry path
-        for spec in PrefsExtensionRegistry.get_all():
-            try:
-                spec.serialize_into_fn(data)
-            except Exception as e:
-                print(f"⚠️ [SuperSkinPro] Failed to serialize prefs for '{spec.json_key}': {e}")
-
         # UnifiedRegistry path
         for ext in UnifiedRegistry.get_all():
             try:
@@ -135,14 +117,6 @@ class PreferencesService:
         default = _get_default_dict()
         prefs   = bpy.context.window_manager.superskin_prefs
         cls._populate_from_dict(prefs, default)
-
-        # Legacy PrefsExtensionRegistry path
-        for spec in PrefsExtensionRegistry.get_all():
-            ext_defaults = io.load_json_safe(spec.defaults_path)
-            try:
-                spec.populate_fn(ext_defaults)
-            except Exception as e:
-                print(f"⚠️ [SuperSkinPro] Failed to reset prefs for '{spec.json_key}': {e}")
 
         # UnifiedRegistry path
         for ext in UnifiedRegistry.get_all():

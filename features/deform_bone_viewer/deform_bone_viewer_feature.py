@@ -69,50 +69,10 @@ class DeformBoneViewerFeature(UnifiedFeatureExtension):
 # ==============================================================================
 
 def register():
-    """Register the feature with UnifiedRegistry and legacy registries."""
+    """Register the feature with UnifiedRegistry."""
     UnifiedRegistry.register(DeformBoneViewerFeature())
-    _register_legacy()
 
 
 def unregister():
-    """Unregister the feature from UnifiedRegistry and legacy registries."""
-    _unregister_legacy()
+    """Unregister the feature from UnifiedRegistry."""
     UnifiedRegistry.unregister("deform_bone_viewer")
-
-
-def _register_legacy():
-    """Register with legacy DomainRegistry and PrefsExtensionSpec for backward compat."""
-    try:
-        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
-
-        # Legacy BaseDomain registration
-        class _DeformBoneViewerDomain(BaseDomain):
-            def get_id(self): return "deform_bone_viewer"
-            def get_actions(self): return []
-            def execute(self, action, context, core_facade):
-                return {"status": "CANCELLED"}
-        DomainRegistry.register(_DeformBoneViewerDomain())
-
-        # Legacy PrefsExtensionSpec registration (collapsible=False)
-        PrefsExtensionRegistry.register(PrefsExtensionSpec(
-            json_key="deform_bone_viewer",
-            json_path=("deform_bone_viewer",),
-            section_title="Deform Bones List",
-            draw_tab="SKINNING",
-            draw_section_fn=lambda layout: DeformBoneViewerFeature().draw_section(layout, bpy.context),
-            populate_fn=lambda data: None,
-            serialize_into_fn=lambda full_dict: None,
-            defaults_path=_DEFAULTS_PATH,
-            collapsible=False,
-        ))
-    except Exception:
-        pass
-
-
-def _unregister_legacy():
-    """Remove from legacy PrefsExtensionRegistry."""
-    try:
-        from ...interface.registry import PrefsExtensionRegistry
-        PrefsExtensionRegistry.unregister("deform_bone_viewer")
-    except Exception:
-        pass
