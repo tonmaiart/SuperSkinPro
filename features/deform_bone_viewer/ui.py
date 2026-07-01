@@ -8,17 +8,17 @@ point at the canonical shared/list_widget/ package.
 import bpy
 import traceback
 
-from ...shared.list_widget import (
+from ...interface.template_ui import (
     SuperSkinListMixin,
     register_adapter,
     draw_list_with_sidebar,
 )
-from ...shared.list_widget.select_ops import (
+from ...interface.template_ui.select_ops import (
     ListSelectionAdapter,
     get_adapter,
     resolve_row_click_selection,
 )
-from ...ui.utils import _get_visible_influence_bones
+from ...interface.utils.utils import _get_visible_influence_bones
 
 
 # ==============================================================================
@@ -144,7 +144,7 @@ class BoneListAdapter(ListSelectionAdapter):
         """
         obj.superskin_storage.active_orphan_name = ""
 
-        from ...ui.utils import exit_mask_mode_if_active
+        from ...interface.utils.utils import exit_mask_mode_if_active
         exit_mask_mode_if_active(context, obj)
 
         try:

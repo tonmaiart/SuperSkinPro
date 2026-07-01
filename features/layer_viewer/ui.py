@@ -7,17 +7,17 @@ canonical shared/list_widget/ package.
 
 import bpy
 
-from ...shared.list_widget import (
+from ...interface.template_ui import (
     SuperSkinListMixin,
     register_adapter,
     draw_list_with_sidebar,
 )
-from ...shared.list_widget.select_ops import (
+from ...interface.template_ui.select_ops import (
     ListSelectionAdapter,
     get_adapter,
     resolve_row_click_selection,
 )
-from ...ui.utils import (
+from ...interface.utils.utils import (
     exit_mask_mode_if_active,
     _enforce_visualizer_from_tab_state,
     sync_layers_to_ui_collection,

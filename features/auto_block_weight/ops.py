@@ -1,7 +1,7 @@
 """Auto Block Weight operator — auto assign closest unlocked bone."""
 
 import bpy
-from ...shared.op_exec import run_domain
+from ...interface.utils.op_exec import run_domain
 
 
 class MESH_OT_auto_assign_closest_unlocked_bone(bpy.types.Operator):

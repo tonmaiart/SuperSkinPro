@@ -10,7 +10,7 @@ top of the LAYER tab at full width.
 import os
 import bpy
 
-from ...registry.unified_feature_api import UnifiedFeatureExtension, UnifiedRegistry
+from ...interface.registry.register_api import UnifiedFeatureExtension, UnifiedRegistry
 from ...core.facade import CoreFacade
 from . import ui
 
@@ -85,7 +85,7 @@ def unregister():
 def _register_legacy():
     """Register with legacy DomainRegistry and PrefsExtensionSpec for backward compat."""
     try:
-        from ...registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
+        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
 
         # Legacy BaseDomain registration
         class _LayerViewerDomain(BaseDomain):
@@ -114,7 +114,7 @@ def _register_legacy():
 def _unregister_legacy():
     """Remove from legacy PrefsExtensionRegistry."""
     try:
-        from ...registry import PrefsExtensionRegistry
+        from ...interface.registry import PrefsExtensionRegistry
         PrefsExtensionRegistry.unregister("layer_viewer")
     except Exception:
         pass

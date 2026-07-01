@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Natchapon Srisuk. All rights reserved.
 import bpy
 from ...core.facade import CoreFacade
-from ...shared.op_exec import run_domain
+from ...interface.utils.op_exec import run_domain
 
 # ==============================================================================
 # VERTEX OPERATORS (Smart Auto-Detect)

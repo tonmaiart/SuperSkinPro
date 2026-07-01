@@ -10,7 +10,15 @@ Consolidated from:
 
 import bpy
 import json
-from ..core.facade import CoreFacade
+import traceback
+
+from ...core.facade import CoreFacade
+from ...core_subsystems.topology_cache_manager import TopologyCacheManager
+from ...core.layer_storage.storage_service import LayerStorageService
+from ...core_subsystems.rust_weight_engine import RustWeightEngine
+from ...core.bone_identity import BoneIdentityService
+# LayerManager kept function-scoped in sync_bones_to_ui_collection —
+# hoisting it triggers a circular import through core_subsystems → features → ui.utils.
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -179,9 +187,10 @@ _influence_visible_cache_key = None  # (id(mesh_data), active_layer_idx, blob_ha
 
 
 def _get_cached_display_order(arm_obj, deform_bones):
-    """⚡ Retain cache mechanism exclusively for bone item sequencing order."""
-    from ..core_subsystems.topology_cache_manager import TopologyCacheManager
+    """⚡ Retain cache mechanism exclusively for bone item sequencing order.
 
+    Hoisted import: TopologyCacheManager (was function-scoped at line 183).
+    """
     global _display_order_cache, _display_order_cache_key
 
     mesh_name = ""
@@ -207,7 +216,11 @@ def _get_cached_display_order(arm_obj, deform_bones):
 
 
 def _get_visible_influence_bones(context, data):
-    """⚡ Pure deterministic weight scanner cache. Stable during selection changes."""
+    """⚡ Pure deterministic weight scanner cache. Stable during selection changes.
+
+    Hoisted imports: LayerStorageService, RustWeightEngine (were function-scoped,
+    absolute 'SuperSkinPro' references at lines 221-222).
+    """
     global _influence_visible_cache, _influence_visible_cache_key
 
     mesh_data = data.data
@@ -217,9 +230,6 @@ def _get_visible_influence_bones(context, data):
 
     if _influence_visible_cache_key == cache_key:
         return set(_influence_visible_cache)
-
-    from SuperSkinPro.core.layer_storage import LayerStorageService
-    from SuperSkinPro.core_subsystems.rust_weight_engine import RustWeightEngine as RustGateway
 
     storage = LayerStorageService(mesh_data)
     raw_layer_dict = storage.read_active_layer_dict()
@@ -236,7 +246,7 @@ def _get_visible_influence_bones(context, data):
                     inner[b_id] = float(w)
         layer_int[v_int] = inner
 
-    rust = RustGateway("influence_scanner")
+    rust = RustWeightEngine("influence_scanner")
     rust_set = rust.call("rust_get_visible_influence_bones", layer_int)
 
     visible_bones = set()
@@ -259,8 +269,10 @@ def _get_display_order_impl(context, data):
     (moved out of ``widget_deform_bones.py`` during the bones-list mirror-
     collection refactor to avoid a circular import — that module imports
     from this one already, and the sync function below needs this same
-    ordering at write time instead of draw time)."""
-    import traceback
+    ordering at write time instead of draw time).
+
+    Hoisted import: traceback (was function-scoped at line 263).
+    """
     items = data.vertex_groups
     arm_obj = next((m.object for m in data.modifiers
                     if m.type == 'ARMATURE' and m.object), None)
@@ -302,11 +314,12 @@ def sync_bones_to_ui_collection(obj):
     exactly as it did against the real ``vertex_groups`` collection before
     this refactor — baking it in here would mean switching the filter mode
     wouldn't visibly update the list until the next depsgraph tick.
+
+    Hoisted imports: BoneIdentityService, LayerStorageService, LayerManager
+    (were function-scoped, absolute 'SuperSkinPro' references at lines 309, 329-330).
     """
     if not obj or obj.type != 'MESH':
         return
-
-    from SuperSkinPro.core.bone_identity import BoneIdentityService
 
     order = _get_display_order_impl(None, obj)
     vg_list = obj.vertex_groups
@@ -326,8 +339,7 @@ def sync_bones_to_ui_collection(obj):
         active_vg_name = vg_list[storage.last_clicked_index].name
 
     try:
-        from SuperSkinPro.core.layer_storage.storage_service import LayerStorageService
-        from SuperSkinPro.core_subsystems.layer_manager.layer_manager import LayerManager
+        from ...core_subsystems.layer_manager.layer_manager import LayerManager
         _sto = LayerStorageService(obj.data)
         _meta = _sto.read_meta_list()
         locks = LayerManager().get_bone_locks(_meta, _sto.get_active_layer_index())

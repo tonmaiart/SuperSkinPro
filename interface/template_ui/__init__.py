@@ -1,6 +1,5 @@
-"""Shared list-widget infrastructure — moved from ui/list_widget/ so that
-feature domains under features/ can import the base classes and helpers
-without creating cross-package ui/ dependencies.
+"""Template UI sub-package — shared UIList mixins, layout helpers, and
+selection adapters for feature domains.
 
 Exports (public):
     SuperSkinListMixin          - mixin for concrete bpy.types.UIList subclasses
@@ -9,9 +8,6 @@ Exports (public):
     resolve_row_click_selection - pure function: modifier-key range-select / toggle logic
     ListSelectionAdapter        - ABC for domain-specific multi-select state
     get_adapter                 - retrieve a registered adapter by domain key
-
-The canonical _adapter_registry lives in select_ops.py here; ui/list_widget/
-re-exports from this package so all consumers share the same singleton.
 """
 
 from importlib import reload

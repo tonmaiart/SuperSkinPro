@@ -15,7 +15,7 @@ Owns:
 import bpy
 import os
 
-from ...registry.unified_feature_api import UnifiedFeatureExtension, UnifiedRegistry
+from ...interface.registry.register_api import UnifiedFeatureExtension, UnifiedRegistry
 from ...core.facade import CoreFacade
 from . import draw as _draw
 
@@ -45,7 +45,7 @@ class MultiColorPreviewFeature(UnifiedFeatureExtension):
     domain_id = "multi_color_preview"
     actions = ["start_multi_color", "stop_multi_color", "toggle_multi_color"]
     section_title = "Multi Color Preview"
-    draw_tab = "CUSTOMIZE"
+    draw_tab = "PREFERENCE"
     defaults_path = _DEFAULTS_PATH
 
     # ── Action dispatch ───────────────────────────────────────────────────
@@ -113,7 +113,7 @@ def unregister():
 def _register_legacy():
     """Register with legacy registries for backward compatibility during migration."""
     try:
-        from ...registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
+        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
 
         # Legacy BaseDomain registration
         class _MultiColorPreviewDomain(BaseDomain):
@@ -128,7 +128,7 @@ def _register_legacy():
             json_key="multi_color_preview",
             json_path=("multi_color_preview",),
             section_title="Multi Color Preview",
-            draw_tab='CUSTOMIZE',
+            draw_tab='PREFERENCE',
             draw_section_fn=lambda layout: None,
             populate_fn=MultiColorPreviewFeature().populate,
             serialize_into_fn=MultiColorPreviewFeature().serialize_into,
@@ -141,7 +141,7 @@ def _register_legacy():
 def _unregister_legacy():
     """Remove from legacy registries."""
     try:
-        from ...registry import PrefsExtensionRegistry
+        from ...interface.registry import PrefsExtensionRegistry
         PrefsExtensionRegistry.unregister("multi_color_preview")
     except Exception:
         pass

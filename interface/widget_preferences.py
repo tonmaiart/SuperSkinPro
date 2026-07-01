@@ -56,7 +56,7 @@ def _draw_edit_context(layout, context, prefs):
     """Edit-mode content: auto-init guard, then spec sections."""
     obj = context.active_object
     if obj and obj.type == 'MESH' and "ss_layers_meta" not in obj.data:
-        from . import utils as _utils
+        from .utils import utils as _utils
         if not _utils._auto_init_pending:
             _utils._auto_init_pending = True
             bpy.app.timers.register(_utils._auto_init_layers, first_interval=0.0)
@@ -73,7 +73,7 @@ def _draw_edit_context(layout, context, prefs):
 
 def _draw_viewer_spec(layout, context, tab_key):
     """Draw the first non-collapsible spec (the list viewer widget) for *tab_key*."""
-    from ..registry.unified_feature_api import UnifiedRegistry
+    from .registry.register_api import UnifiedRegistry
 
     for ext in UnifiedRegistry.get_by_tab(tab_key):
         if not ext.is_collapsible():
@@ -83,7 +83,7 @@ def _draw_viewer_spec(layout, context, tab_key):
 
 def _draw_tool_specs(layout, context, tab_key):
     """Draw all collapsible tool specs for *tab_key* with separators."""
-    from ..registry.unified_feature_api import UnifiedRegistry
+    from .registry.register_api import UnifiedRegistry
 
     for ext in UnifiedRegistry.get_by_tab(tab_key):
         if ext.is_collapsible():
@@ -138,7 +138,7 @@ def draw_system_for_addon_prefs(layout, context):
 def _draw_system(layout, context, prefs):
     """SYSTEM tab: visual customization (ramps, palette, feature extensions),
     license activation, system/debug, and about."""
-    from ..registry.unified_feature_api import UnifiedRegistry
+    from .registry.register_api import UnifiedRegistry
 
     ui_state = prefs.ui_state
     customize = prefs.customize
@@ -161,8 +161,8 @@ def _draw_system(layout, context, prefs):
         lambda box: _draw_ramp_body(box, None, customize.mask_ramp, "mask"),
     )
 
-    # CUSTOMIZE-tab extensions from feature domains (e.g. Bone Picker Colors)
-    for ext in UnifiedRegistry.get_by_tab('CUSTOMIZE'):
+    # PREFERENCE-tab extensions from feature domains (e.g. Bone Picker Colors)
+    for ext in UnifiedRegistry.get_by_tab('PREFERENCE'):
         layout.separator(factor=0.4)
         _draw_collapsible_box_ext(layout, context, ext)
 

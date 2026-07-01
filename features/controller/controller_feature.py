@@ -10,7 +10,7 @@ registered directly from __init__.py via the ops_* sub-modules.
 
 import bpy
 
-from ...registry.unified_feature_api import UnifiedFeatureExtension, UnifiedRegistry
+from ...interface.registry.register_api import UnifiedFeatureExtension, UnifiedRegistry
 from ...core.facade import CoreFacade
 
 
@@ -68,7 +68,7 @@ def unregister():
 def _register_legacy():
     """Register with legacy DomainRegistry for backward compat during migration."""
     try:
-        from ...registry import DomainRegistry, BaseDomain
+        from ...interface.registry import DomainRegistry, BaseDomain
 
         # Legacy BaseDomain registration
         class _ControllerDomain(BaseDomain):

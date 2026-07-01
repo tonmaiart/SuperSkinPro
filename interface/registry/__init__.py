@@ -1,6 +1,6 @@
-"""Registry package for SuperSkinPro.
+"""Registry sub-package for the Interface subsystem.
 
-Unified Component Architecture (new):
+Unified Component Architecture:
     UnifiedFeatureExtension — single-class contract for feature domains
     UnifiedRegistry           — central registry for actions + UI + persistence
     SUPERSKIN_OT_execute_action — universal proxy operator
@@ -12,15 +12,12 @@ Legacy (still supported during migration):
 
 from importlib import reload
 
-# Explicit bottom-up reload of every source file in this package so
-# ``F3 > Reload Scripts`` picks up the latest class definitions even
-# when ``sys.modules`` still holds stale bytecode.
 from . import base_domain
 from . import domain_registry
 from . import prefs_extension_registry
-from . import unified_feature_api
+from . import register_api
 
-for _mod in (base_domain, domain_registry, prefs_extension_registry, unified_feature_api):
+for _mod in (base_domain, domain_registry, prefs_extension_registry, register_api):
     try:
         reload(_mod)
     except Exception:
@@ -29,7 +26,7 @@ for _mod in (base_domain, domain_registry, prefs_extension_registry, unified_fea
 from .base_domain import BaseDomain
 from .domain_registry import DomainRegistry
 from .prefs_extension_registry import PrefsExtensionRegistry, PrefsExtensionSpec
-from .unified_feature_api import (
+from .register_api import (
     UnifiedFeatureExtension,
     UnifiedRegistry,
     SUPERSKIN_OT_execute_action,

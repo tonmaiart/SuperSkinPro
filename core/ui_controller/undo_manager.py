@@ -18,7 +18,17 @@ Blender handles everything.
 import bpy
 import functools
 
-from SuperSkinPro.core_subsystems.context_selection_service import ContextSelectionService as _CSS
+# Converted from absolute 'SuperSkinPro.core_subsystems...' to relative import.
+from ...core_subsystems.context_selection_service import ContextSelectionService as _CSS
+
+# Hoisted from _sync_after_undo / _sync_active_layer_from_meta —
+# converted from absolute 'SuperSkinPro.*' imports to relative imports.
+from ..shaders.shader_manager import ShaderManager
+from ..layer_storage.temp_vg_bridge import get_active_layer_from_meta
+from ..layer_storage.storage_service import LayerStorageService
+# sync_layers_to_ui_collection kept function-scoped in _sync_active_layer_from_meta —
+# hoisting it triggers a circular import: ui.utils is still initialising when
+# undo_manager is loaded through the core → preferences → features chain.
 
 
 def skin_transaction(*, color_only: bool = False, check_mask_gaps: bool = False):
@@ -95,8 +105,10 @@ def _on_redo_post(*_):
 
 
 def _sync_after_undo():
-    """After Blender restores temp VGs, sync active layer index from __ssp_meta."""
-    from ..shaders.shader_manager import ShaderManager
+    """After Blender restores temp VGs, sync active layer index from __ssp_meta.
+
+    Hoisted imports: ShaderManager.
+    """
     try:
         obj = bpy.context.active_object
         if obj and obj.type == 'MESH' and obj.mode == 'EDIT':
@@ -110,10 +122,10 @@ def _sync_after_undo():
 
 
 def _sync_active_layer_from_meta(obj):
-    """Read __ssp_meta VG custom prop → update active layer index + UI collection."""
-    from ..layer_storage.temp_vg_bridge import get_active_layer_from_meta
-    from ..layer_storage.storage_service import LayerStorageService
+    """Read __ssp_meta VG custom prop → update active layer index + UI collection.
 
+    Hoisted imports: get_active_layer_from_meta, LayerStorageService.
+    """
     layer_idx = get_active_layer_from_meta(obj)
     if layer_idx < 0:
         return
@@ -125,7 +137,7 @@ def _sync_active_layer_from_meta(obj):
     storage.set_active_layer_index(layer_idx)
 
     try:
-        from SuperSkinPro.ui.utils import sync_layers_to_ui_collection
+        from ...interface.utils.utils import sync_layers_to_ui_collection
         sync_layers_to_ui_collection(obj)
     except Exception:
         pass

@@ -1,7 +1,7 @@
 """Operator shells for the multi_color_preview feature domain."""
 
 import bpy
-from ...shared.op_exec import run_domain
+from ...interface.utils.op_exec import run_domain
 
 
 class SUPERSKIN_OT_toggle_multi_color(bpy.types.Operator):

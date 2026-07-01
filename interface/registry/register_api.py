@@ -1,5 +1,8 @@
 """Unified Feature Extension API — single source-of-truth for feature domains.
 
+Located in ``interface.registry.register_api`` — the canonical registration
+API for the Interface subsystem.
+
 This module collapses the dual-registry system (BaseDomain/DomainRegistry +
 PrefsExtensionSpec/PrefsExtensionRegistry) into one cohesive interface pattern.
 
@@ -57,7 +60,7 @@ class UnifiedFeatureExtension(ABC):
     """Label text shown in the collapsible section header."""
 
     draw_tab: str = ""
-    """Target workspace tab: ``'LAYER'``, ``'SKINNING'``, or ``'CUSTOMIZE'``."""
+    """Target workspace tab: ``'LAYER'``, ``'SKINNING'``, or ``'PREFERENCE'``."""
 
     json_path: tuple = None
     """JSON key path for persistence nesting. Defaults to ``(domain_id,)`` when left unset."""
@@ -127,7 +130,7 @@ class UnifiedFeatureExtension(ABC):
         """Target workspace tab.
 
         Reads from ``self.draw_tab``. Accepts ``'LAYER'``, ``'SKINNING'``,
-        or ``'CUSTOMIZE'``.
+        or ``'PREFERENCE'``.
         """
         return self.draw_tab
 
@@ -271,7 +274,14 @@ class UnifiedRegistry:
 
         Viewer domains (``is_collapsible() == False``) are returned first
         so they render at the top of the tab.
+
+        Backward compatibility: ``'CUSTOMIZE'`` is automatically mapped to
+        ``'PREFERENCE'`` so that extensions registered with the legacy tab
+        key continue to resolve correctly.
         """
+        # Backward compatibility: map legacy CUSTOMIZE → PREFERENCE
+        if tab_key == "CUSTOMIZE":
+            tab_key = "PREFERENCE"
         matching = [e for e in cls._extensions.values() if e.get_draw_tab() == tab_key]
         matching.sort(key=lambda e: (0 if not e.is_collapsible() else 1, e.get_priority(), e.get_id()))
         return matching
@@ -387,7 +397,7 @@ class SUPERSKIN_OT_execute_action(bpy.types.Operator):
     )
 
     def execute(self, context):
-        from ..core.facade import CoreFacade
+        from ...core.facade import CoreFacade
 
         if not self.domain_id:
             self.report({'ERROR'}, "domain_id is required")

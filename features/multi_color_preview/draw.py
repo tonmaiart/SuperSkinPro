@@ -14,7 +14,7 @@ import blf
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
-from ...shared.gpu_utils import (
+from ...interface.utils.gpu_utils import (
     GL_POLYGON_OFFSET_FILL,
     gl_polygon_offset, gl_enable, gl_disable,
     BONE_COLORS,

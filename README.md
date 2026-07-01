@@ -8,7 +8,7 @@ Features communicate with Core exclusively via `CoreFacade`. `UIController` is a
 
 ### Unified Component Architecture
 
-Every feature domain under `features/<name>/` is a self-contained package with a single entry-point class inheriting from `UnifiedFeatureExtension` (defined in `registry/unified_feature_api.py`).
+Every feature domain under `features/<name>/` is a self-contained package with a single entry-point class inheriting from `UnifiedFeatureExtension` (defined in `interface/registry/register_api.py`).
 
 ```
 [UI Layout Click] → SUPERSKIN_OT_execute_action (domain_id, action_id)
@@ -28,14 +28,14 @@ Each extension owns:
 |---|---|
 | `LAYER` | `layer_viewer` (non-collapsible), `data_io`, `weight_transfer` |
 | `SKINNING` | `deform_bone_viewer` (non-collapsible), `weight_apply`, `mirror`, `clipboard`, `auto_block_weight`, `circle_tool_adjust`, `controller` |
-| `CUSTOMIZE` | `bone_picker`, `multi_color_preview` (hosted in Add-on Preferences) |
+| `PREFERENCE` | `bone_picker`, `multi_color_preview` (hosted in Add-on Preferences) |
 
 ### Registration Flow
 
 1. `features/<name>/<name>_feature.py` — defines a `UnifiedFeatureExtension` subclass and a module-level `register()` that calls `UnifiedRegistry.register(MyFeature())`.
 2. `features/<name>/__init__.py` — imports `<name>_feature` and calls `<name>_feature.register()`.
 3. `features/__init__.py` — imports each domain package; order controls tab rendering priority.
-4. `__init__.py` (top-level) — calls `registry.register_operator()` to register `SUPERSKIN_OT_execute_action`.
+4. `__init__.py` (top-level) — calls `interface.registry.register_operator()` to register `SUPERSKIN_OT_execute_action`.
 
 ### Example: Mirror Feature
 
@@ -49,7 +49,7 @@ Rust math is invoked via `CoreFacade.get_rust_gateway()`.
 
 ## Adding a New Feature Domain
 
-See `registry/README.md` for the full quick-start guide with annotated template code.
+See `interface/registry/register_api.py` for the `UnifiedFeatureExtension` base class and `interface/registry/__init__.py` for the full quick-start guide with annotated template code.
 
 Quick checklist:
 1. Create `features/<name>/<name>_feature.py` extending `UnifiedFeatureExtension`.

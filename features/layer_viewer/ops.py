@@ -9,7 +9,7 @@ import bpy
 
 from ...core.facade import CoreFacade
 from ...core_subsystems.license import LicenseService
-from ...ui.utils import (
+from ...interface.utils.utils import (
     _is_valid_mesh,
     _has_layer_system,
     _resolve_layer_target,

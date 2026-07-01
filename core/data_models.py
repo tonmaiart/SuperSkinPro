@@ -6,7 +6,8 @@ folds them into panels.
 """
 import bpy
 
-from SuperSkinPro.core.prop_callbacks import on_skin_sub_tabs_update
+# Converted from absolute 'SuperSkinPro.core.prop_callbacks' to relative import.
+from .prop_callbacks import on_skin_sub_tabs_update
 
 
 class SuperSkinAdvancedSettings(bpy.types.PropertyGroup):

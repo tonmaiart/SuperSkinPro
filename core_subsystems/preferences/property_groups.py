@@ -8,15 +8,19 @@ Feature domains own their own PropertyGroups (see features/<domain>/prefs.py).
 
 import bpy
 
+# Hoisted from update callbacks — converted from absolute 'SuperSkinPro.*'
+# imports to relative imports for Blender Extensions Platform compatibility.
+from ...core.shaders.shader_manager import ShaderManager
+from .preferences_service import PreferencesService
+
 
 def _on_license_field_changed(self, context):
-    from .preferences_service import PreferencesService
+    # Hoisted import: PreferencesService.
     PreferencesService.save_to_user_file()
 
 
 def _on_visual_pref_changed(self, context):
-    from SuperSkinPro.core.shaders.shader_manager import ShaderManager
-    from .preferences_service import PreferencesService
+    # Hoisted imports: ShaderManager, PreferencesService.
     ShaderManager().invalidate_color_only()
     PreferencesService.save_to_user_file()
 

@@ -11,7 +11,17 @@ import bpy
 import bmesh
 
 from ...core.facade import CoreFacade
-from ...ui.utils import _is_valid_mesh
+from ...interface.utils.utils import _is_valid_mesh
+
+# Hoisted from function bodies — converted from absolute 'SuperSkinPro.*'
+# imports to relative imports for Blender Extensions Platform compatibility.
+from ...core_subsystems.layer_manager.layer_manager import (
+    clear_all_selected, add_vg_selected,
+)
+from ...core.layer_storage.temp_vg_bridge import (
+    read_temp_vgs_to_layer, delete_temp_vgs,
+)
+from ...core.layer_storage.storage_service import LayerStorageService
 
 
 # ==============================================================================
@@ -155,9 +165,6 @@ class MESH_OT_show_affect_bone(bpy.types.Operator):
             obj = context.active_object
             if self.bone_name in obj.vertex_groups:
                 vg = obj.vertex_groups[self.bone_name]
-                from SuperSkinPro.core_subsystems.layer_manager.layer_manager import (
-                    clear_all_selected, add_vg_selected,
-                )
                 storage = obj.superskin_storage
                 clear_all_selected(obj)
                 add_vg_selected(obj, self.bone_name)
@@ -285,9 +292,6 @@ class OBJECT_OT_mw_select_specific_vertex_group(bpy.types.Operator):
         obj = context.active_object
         if obj and self.group_name in obj.vertex_groups:
             vg = obj.vertex_groups[self.group_name]
-            from SuperSkinPro.core_subsystems.layer_manager.layer_manager import (
-                clear_all_selected, add_vg_selected,
-            )
             storage = obj.superskin_storage
             clear_all_selected(obj)
             add_vg_selected(obj, self.group_name)
@@ -397,9 +401,6 @@ class SUPERSKIN_OT_save_weight_and_exit(bpy.types.Operator):
             # Force Object Mode to securely commit updates to custom ID data properties.
             if obj.mode == 'EDIT':
                 bpy.ops.object.mode_set(mode='OBJECT')
-
-            from SuperSkinPro.core.layer_storage.temp_vg_bridge import read_temp_vgs_to_layer, delete_temp_vgs
-            from SuperSkinPro.core.layer_storage.storage_service import LayerStorageService
 
             storage = LayerStorageService(obj.data)
             active_idx = storage.get_active_layer_index()

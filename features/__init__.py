@@ -14,7 +14,7 @@ The viewer domains must be first so they render at the top of their tabs:
 
   LAYER tab   : layer_viewer (first, non-collapsible) → data_io → weight_transfer
   SKINNING tab: deform_bone_viewer (first, non-collapsible) → weight_apply → mirror → clipboard → auto_block → circle_tool_adjust
-  CUSTOMIZE   : bone_picker → multi_color_preview (hosted under SYSTEM tab)
+  PREFERENCE  : bone_picker → multi_color_preview (hosted under SYSTEM tab)
 """
 
 from importlib import reload

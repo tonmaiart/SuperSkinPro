@@ -10,6 +10,14 @@ import bpy
 
 from . import io
 
+# Hoisted from multiple classmethods — converted from absolute 'SuperSkinPro.*'
+# imports to relative imports for Blender Extensions Platform compatibility.
+from ...interface.registry.prefs_extension_registry import PrefsExtensionRegistry
+from ...interface.registry.register_api import UnifiedRegistry
+# MirrorPreferencesService kept function-scoped in mirror accessor methods —
+# hoisting it triggers loading the entire features package during core_subsystems
+# initialisation, creating a circular import back through ui.utils.
+
 
 # Cache the default dict (loaded once, never changes at runtime).
 _default_dict = None
@@ -53,10 +61,10 @@ class PreferencesService:
 
     @classmethod
     def load(cls) -> None:
-        """Read default.json + user.json, merge, populate core + extension PropertyGroups."""
-        from SuperSkinPro.registry.prefs_extension_registry import PrefsExtensionRegistry
-        from SuperSkinPro.registry.unified_feature_api import UnifiedRegistry
+        """Read default.json + user.json, merge, populate core + extension PropertyGroups.
 
+        Hoisted imports: PrefsExtensionRegistry, UnifiedRegistry.
+        """
         default = _get_default_dict()
         user    = io.load_json_safe(io.user_json_path())
         merged  = io.deep_merge(default, user)
@@ -95,10 +103,10 @@ class PreferencesService:
 
     @classmethod
     def save_to_user_file(cls) -> None:
-        """Serialize core + all extension prefs and write to user.json."""
-        from SuperSkinPro.registry.prefs_extension_registry import PrefsExtensionRegistry
-        from SuperSkinPro.registry.unified_feature_api import UnifiedRegistry
+        """Serialize core + all extension prefs and write to user.json.
 
+        Hoisted imports: PrefsExtensionRegistry, UnifiedRegistry.
+        """
         prefs = bpy.context.window_manager.superskin_prefs
         data  = cls._dict_from_property_group(prefs)
 
@@ -120,10 +128,10 @@ class PreferencesService:
 
     @classmethod
     def reset_to_default(cls) -> None:
-        """Load default values directly (no merge) into all PropertyGroups."""
-        from SuperSkinPro.registry.prefs_extension_registry import PrefsExtensionRegistry
-        from SuperSkinPro.registry.unified_feature_api import UnifiedRegistry
+        """Load default values directly (no merge) into all PropertyGroups.
 
+        Hoisted imports: PrefsExtensionRegistry, UnifiedRegistry.
+        """
         default = _get_default_dict()
         prefs   = bpy.context.window_manager.superskin_prefs
         cls._populate_from_dict(prefs, default)
@@ -171,22 +179,23 @@ class PreferencesService:
 
     @classmethod
     def get_mirror_axis(cls) -> str:
-        from SuperSkinPro.features.mirror.mirror_feature import MirrorPreferencesService
+        # Kept function-scoped — hoisting triggers circular import through features → ui.utils.
+        from ...features.mirror.mirror_feature import MirrorPreferencesService
         return MirrorPreferencesService.get_mirror_axis()
 
     @classmethod
     def get_mirror_direction(cls) -> str:
-        from SuperSkinPro.features.mirror.mirror_feature import MirrorPreferencesService
+        from ...features.mirror.mirror_feature import MirrorPreferencesService
         return MirrorPreferencesService.get_mirror_direction()
 
     @classmethod
     def get_mirror_both_data(cls) -> bool:
-        from SuperSkinPro.features.mirror.mirror_feature import MirrorPreferencesService
+        from ...features.mirror.mirror_feature import MirrorPreferencesService
         return MirrorPreferencesService.get_mirror_both_data()
 
     @classmethod
     def get_mirror_search_replace_pairs(cls) -> list:
-        from SuperSkinPro.features.mirror.mirror_feature import MirrorPreferencesService
+        from ...features.mirror.mirror_feature import MirrorPreferencesService
         return MirrorPreferencesService.get_mirror_search_replace_pairs()
 
     # ── Ramp customization checks ──

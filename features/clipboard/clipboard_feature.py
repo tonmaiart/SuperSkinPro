@@ -13,7 +13,7 @@ Owns:
 import bpy
 import os
 
-from ...registry.unified_feature_api import UnifiedFeatureExtension, UnifiedRegistry
+from ...interface.registry.register_api import UnifiedFeatureExtension, UnifiedRegistry
 from ...core.facade import CoreFacade
 
 
@@ -171,7 +171,7 @@ def unregister():
 def _register_legacy():
     """Register with legacy registries for backward compatibility during migration."""
     try:
-        from ...registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
+        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
 
         # Legacy BaseDomain registration
         class _ClipboardDomain(BaseDomain):
@@ -199,7 +199,7 @@ def _register_legacy():
 def _unregister_legacy():
     """Remove from legacy registries."""
     try:
-        from ...registry import PrefsExtensionRegistry
+        from ...interface.registry import PrefsExtensionRegistry
         PrefsExtensionRegistry.unregister("clipboard")
     except Exception:
         pass

@@ -2,9 +2,10 @@
 
 import gpu
 
-# Re-export GPU primitives from shared/gpu_utils.py so core callers keep working
-# without change and feature packages can also import from shared/ directly.
-from ...shared.gpu_utils import (
+# Re-export GPU primitives from interface/utils/gpu_utils.py so core callers
+# keep working without change and feature packages can also import from
+# interface/utils/ directly.
+from ...interface.utils.gpu_utils import (
     GL_POLYGON_OFFSET_FILL,
     gl_polygon_offset,
     gl_enable,

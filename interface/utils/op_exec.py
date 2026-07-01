@@ -18,7 +18,7 @@ def run_domain(context, action: str):
     ``run_domain_via_unified()`` for new code.
     """
     from ..registry import DomainRegistry
-    from ..core.facade import CoreFacade
+    from ...core.facade import CoreFacade
     context.scene.superskin_internal_transaction = True
     try:
         facade = CoreFacade(context)
@@ -37,8 +37,8 @@ def run_domain_via_unified(context, domain_id: str, action: str):
 
     Routes through ``UnifiedRegistry.execute`` by domain_id + action.
     """
-    from ..registry.unified_feature_api import UnifiedRegistry
-    from ..core.facade import CoreFacade
+    from ..registry.register_api import UnifiedRegistry
+    from ...core.facade import CoreFacade
     context.scene.superskin_internal_transaction = True
     try:
         facade = CoreFacade(context)

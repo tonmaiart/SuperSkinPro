@@ -72,4 +72,4 @@ To prevent runtime state desynchronization, stale variables, or duplicate regist
 ### 🛑 Strict Guardrails for Feature Agents
 *   **ST_STRICT Boundary:** Never write patch or hotfix code modifying scripts inside `core/`.
 *   **Zero Cross-Imports:** Features must remain fully decoupled. Features are strictly forbidden from importing modules or variables from sibling packages under `features/*`.
-*   **Operator Execution:** Operators must act as thin shells. Use `from ...shared.op_exec import run_ctrl or run_domain` to trigger action paths instead of hardcoding heavy mutations inside `Operator.execute`.
+*   **Operator Execution:** Operators must act as thin shells. Use `from ...interface.utils.op_exec import run_ctrl or run_domain` to trigger action paths instead of hardcoding heavy mutations inside `Operator.execute`.

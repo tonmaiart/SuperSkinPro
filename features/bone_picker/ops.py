@@ -15,7 +15,7 @@ class OBJECT_OT_ssp_toggle_color_bone_style(bpy.types.Operator):
     bl_label = "Toggle Color Bone Style"
 
     def execute(self, context):
-        from ...shared.op_exec import run_domain
+        from ...interface.utils.op_exec import run_domain
         return run_domain(context, "toggle_multi_color")
 
 

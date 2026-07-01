@@ -1,7 +1,7 @@
 """Weight-apply operators — Add, Scale, Smooth, Sharpen + preset menus + preset setter."""
 
 import bpy
-from ...shared.op_exec import run_domain
+from ...interface.utils.op_exec import run_domain
 from .weight_apply_feature import get_prefs
 
 

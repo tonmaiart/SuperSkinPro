@@ -9,9 +9,22 @@ Relocated from operators/ops_scene_modes.py to features/controller/ (2026-06).
 """
 
 import bpy
+import bmesh
+
 from ...core.facade import CoreFacade
 from ...core.bone_identity import BoneIdentityService
-from ...ui.utils import _is_valid_mesh
+from ...interface.utils.utils import _is_valid_mesh
+
+# Hoisted from function bodies — converted from absolute 'SuperSkinPro.*'
+# imports to relative imports for Blender Extensions Platform compatibility.
+from ...core.layer_storage.temp_vg_bridge import (
+    has_temp_vgs, delete_temp_vgs, load_layer_to_temp_vgs,
+    read_temp_vgs_from_bm,
+)
+from ...core.layer_storage.storage_service import LayerStorageService
+from ...core.layer_storage.geometry import get_local_mapping
+from ...interface.utils import utils as _utils
+from ..bone_picker import deform_overlay
 
 
 # ==============================================================================
@@ -204,13 +217,11 @@ def _enter_edit_mode(op, context):
         pass  # graceful — visualizer is optional
 
     try:
-        from ..bone_picker import deform_overlay
         deform_overlay.show()
     except Exception:
         pass
 
     try:
-        from SuperSkinPro.ui import utils as _utils
         _utils.force_open_super_skin_tab()
     except Exception:
         pass
@@ -254,7 +265,6 @@ def _exit_edit_mode(op, context, *, keep_panel_open: bool = False):
     # Also hide the deform bone overlay — it's Edit-Mode-only and should
     # never carry over into Object Mode.
     try:
-        from ..bone_picker import deform_overlay
         deform_overlay.hide()
     except Exception:
         pass
@@ -263,9 +273,6 @@ def _exit_edit_mode(op, context, *, keep_panel_open: bool = False):
 
     # Delete temp VGs in Object Mode as required by delete_temp_vgs contract.
     try:
-        from SuperSkinPro.core.layer_storage.temp_vg_bridge import (
-            has_temp_vgs, delete_temp_vgs
-        )
         if has_temp_vgs(obj):
             delete_temp_vgs(obj)
     except Exception:
@@ -291,7 +298,6 @@ def _exit_edit_mode(op, context, *, keep_panel_open: bool = False):
         overlay.show_vertex_group_weights = False
 
     if not keep_panel_open:
-        from SuperSkinPro.ui import utils as _utils
         _utils.force_close_tab()
     return {'FINISHED'}
 
@@ -371,7 +377,6 @@ class OBJECT_OT_mw_force_pose_mode(bpy.types.Operator):
 
         bpy.ops.object.mode_set(mode='POSE')
 
-        from SuperSkinPro.ui import utils as _utils
         _utils.force_close_tab()
         return {'FINISHED'}
 
@@ -383,12 +388,6 @@ class OBJECT_OT_mw_force_pose_mode(bpy.types.Operator):
 def _load_active_layer_to_temp_vgs(obj, context):
     """Load the active layer into temp VGs after entering Edit Mode."""
     try:
-        from SuperSkinPro.core.layer_storage.temp_vg_bridge import (
-            load_layer_to_temp_vgs, has_temp_vgs, delete_temp_vgs
-        )
-        from SuperSkinPro.core.layer_storage.storage_service import LayerStorageService
-        from SuperSkinPro.core.layer_storage.geometry import get_local_mapping
-
         if has_temp_vgs(obj):
             delete_temp_vgs(obj)
 
@@ -410,11 +409,6 @@ def _bake_temp_vgs_on_exit(obj):
     """Bake temp VGs back to ss_layer_N when exiting Edit Mode.
     Caller must delete temp VGs in OBJECT mode after mode_set."""
     try:
-        import bmesh
-        from SuperSkinPro.core.layer_storage.temp_vg_bridge import (
-            has_temp_vgs, read_temp_vgs_from_bm
-        )
-        from SuperSkinPro.core.layer_storage.storage_service import LayerStorageService
 
         if not has_temp_vgs(obj):
             return
@@ -472,7 +466,6 @@ class SUPERSKIN_OT_save_weights(bpy.types.Operator):
         result = _exit_edit_mode(self, context, keep_panel_open=True)
         if result == {'FINISHED'}:
             try:
-                from ...core.facade import CoreFacade
                 CoreFacade(context).finish(color_only=False)
             except Exception as exc:
                 print(f"[SuperSkinPro] Save Weights: finish() failed: {exc}")
@@ -507,7 +500,6 @@ def _superskin_auto_save_guard(scene, depsgraph):
             and current_mode != 'EDIT_MESH'
             and not scene.superskin_internal_transaction):
         try:
-            from SuperSkinPro.core.layer_storage.temp_vg_bridge import has_temp_vgs
             if has_temp_vgs(obj):
                 _schedule_auto_save(obj.name)
         except Exception:
@@ -528,13 +520,6 @@ def _schedule_auto_save(obj_name: str) -> None:
             return None
         _obj = _ctx.view_layer.objects.get(obj_name)
         if not (_obj and _obj.type == 'MESH'):
-            return None
-
-        try:
-            from SuperSkinPro.core.layer_storage.temp_vg_bridge import (
-                has_temp_vgs, delete_temp_vgs,
-            )
-        except Exception:
             return None
 
         if not has_temp_vgs(_obj):
@@ -558,7 +543,6 @@ def _schedule_auto_save(obj_name: str) -> None:
             except Exception:
                 pass
             try:
-                from SuperSkinPro.features.bone_picker import deform_overlay
                 deform_overlay.hide()
             except Exception:
                 pass

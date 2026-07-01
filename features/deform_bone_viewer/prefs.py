@@ -10,7 +10,7 @@ the bone list and the save/exit operator.
 import os
 import bpy
 
-from ...registry.prefs_extension_registry import PrefsExtensionRegistry, PrefsExtensionSpec
+from ...interface.registry.prefs_extension_registry import PrefsExtensionRegistry, PrefsExtensionSpec
 from . import ui
 
 

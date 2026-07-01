@@ -13,7 +13,7 @@ Owns:
 import bpy
 import os
 
-from ...registry.unified_feature_api import UnifiedFeatureExtension, UnifiedRegistry
+from ...interface.registry.register_api import UnifiedFeatureExtension, UnifiedRegistry
 from ...core.facade import CoreFacade
 from . import draw as _draw
 
@@ -119,7 +119,7 @@ class BonePickerFeature(UnifiedFeatureExtension):
     domain_id = "bone_picker"
     actions = ["start_bone_picker", "stop_bone_picker", "clear_multi_selection"]
     section_title = "Bone Picker"
-    draw_tab = "CUSTOMIZE"
+    draw_tab = "PREFERENCE"
     json_path = ("customize", "bone_picker")
     defaults_path = _DEFAULTS_PATH
 
@@ -246,7 +246,7 @@ def unregister():
 def _register_legacy():
     """Register with legacy registries for backward compatibility during migration."""
     try:
-        from ...registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
+        from ...interface.registry import DomainRegistry, BaseDomain, PrefsExtensionRegistry, PrefsExtensionSpec
 
         # Legacy BaseDomain registration
         class _BonePickerDomain(BaseDomain):
@@ -261,7 +261,7 @@ def _register_legacy():
             json_key="bone_picker",
             json_path=("customize", "bone_picker"),
             section_title="Bone Picker",
-            draw_tab='CUSTOMIZE',
+            draw_tab='PREFERENCE',
             draw_section_fn=lambda layout: BonePickerFeature().draw_section(layout, bpy.context),
             populate_fn=BonePickerFeature().populate,
             serialize_into_fn=BonePickerFeature().serialize_into,
@@ -274,7 +274,7 @@ def _register_legacy():
 def _unregister_legacy():
     """Remove from legacy registries."""
     try:
-        from ...registry import PrefsExtensionRegistry
+        from ...interface.registry import PrefsExtensionRegistry
         PrefsExtensionRegistry.unregister("bone_picker")
     except Exception:
         pass
