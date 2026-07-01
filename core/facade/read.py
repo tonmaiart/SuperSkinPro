@@ -1,0 +1,180 @@
+"""ReadFacadeMixin — all read-only context harvesting operations.
+
+Methods here must not mutate storage, shader state, or mesh data.
+
+Four methods call core_subsystems directly for pure read operations:
+    get_selected_verts()         -> ContextSelectionService
+    is_mask_context()            -> ContextSelectionService
+    get_local_mapping()          -> TopologyCacheManager
+    get_cached_mesh_neighbors()  -> TopologyCacheManager
+"""
+
+from ...core_subsystems.context_selection_service import ContextSelectionService
+from ...core_subsystems.topology_cache_manager import TopologyCacheManager
+
+
+class ReadFacadeMixin:
+    """Mixin providing read-only access to layer, mesh, and bone state."""
+
+    def get_active_layer_dict(self) -> dict:
+        """Return active layer weight dict {v_idx: {bone_name: weight}}."""
+        return self.storage.read_active_layer_dict()
+
+    def get_active_mask_dict(self) -> dict:
+        """Return active mask dict {v_idx: float} from the correct source for the current mode.
+
+        In Edit Mode with temp VGs, reads from the live __ssp_m BMesh channel so the
+        result is consistent with _read_active_layer_int() and write_layer_to_temp_vgs_bm().
+        Outside Edit Mode (or when temp VGs are absent), reads from ss_mask_N storage.
+        """
+        from ..layer_storage.temp_vg_bridge import has_temp_vgs, read_temp_vgs_from_bm
+        if self.obj.mode == 'EDIT' and has_temp_vgs(self.obj):
+            import bmesh as _bm_mod
+            bm = _bm_mod.from_edit_mesh(self.mesh)
+            _, mask_dict, _ = read_temp_vgs_from_bm(bm, self.obj)
+            return {int(v): float(w) for v, w in mask_dict.items()}
+        return self.storage.read_active_mask_dict()
+
+    def get_active_layer_index(self) -> int:
+        return self.active_layer_index
+
+    def get_meta_list(self) -> list:
+        return self.storage.read_meta_list()
+
+    def get_selected_verts(self) -> list[int]:
+        """Return selected vertex indices for the current editor mode.
+
+        Delegates to ContextSelectionService.
+        Result is cached on the facade instance for the lifetime of one
+        operator execution (facade is per-operator, so caching is safe).
+        """
+        if hasattr(self, '_cached_sel_verts'):
+            return self._cached_sel_verts
+        result = ContextSelectionService.get_selected_verts(self.obj, self.mesh)
+        self._cached_sel_verts = result
+        return result
+
+    def get_active_vg_id(self):
+        return self._active_vg_id()
+
+    def get_active_vg_name(self) -> str:
+        idx = self.get_active_vg_id()
+        if idx is None:
+            return ""
+        vg_list = self.obj.vertex_groups
+        return vg_list[idx].name if 0 <= idx < len(vg_list) else ""
+
+    def get_vertex_groups(self):
+        return self.obj.vertex_groups
+
+    def get_mesh(self):
+        return self.mesh
+
+    def get_obj(self):
+        return self.obj
+
+    def is_mask_context(self) -> bool:
+        """Return True when the UI is in a mask-painting context."""
+        return ContextSelectionService.is_mask_context(self._ctx.scene)
+
+    def get_local_mapping(self) -> tuple[dict[str, int], dict[int, str]]:
+        """Return (bone_to_id, id_to_bone) for real vertex groups.
+
+        Delegates to TopologyCacheManager. Shares the class-level cache
+        with any other caller using the manager.
+        """
+        return TopologyCacheManager.get_local_mapping(self.obj, self.storage)
+
+    def get_bone_locks(self, layer_index: int = None) -> dict:
+        from ..ui_controller import layer_crud
+        return layer_crud.get_bone_locks(self, layer_index)
+
+    def get_vertex_coordinates(self) -> list:
+        return self.storage.get_vertex_coordinates()
+
+    def get_num_verts(self) -> int:
+        return len(self.mesh.vertices)
+
+    def read_active_layer(self) -> dict:
+        """Read the active layer from the correct source for the current mode.
+
+        In Edit Mode, reads from __ssp_* BMesh temp VGs (the post-0016
+        source of truth). Outside Edit Mode, reads from ss_layer_N.
+
+        Returns {v_idx (int): {bone_name (str): weight (float)}}.
+        Also caches the unified bone mapping for a paired write_active_layer()
+        call on the same instance.
+        """
+        bone_to_id, id_to_bone = self.storage.get_unified_mapping(self.obj)
+        self._bone_to_id = bone_to_id
+        self._id_to_bone = id_to_bone
+        layer_int = self._read_active_layer_int(bone_to_id)
+        return {
+            v_idx: {id_to_bone[b]: w for b, w in weights.items() if b in id_to_bone}
+            for v_idx, weights in layer_int.items()
+        }
+
+    def get_unified_mapping(self) -> tuple:
+        """Return (bone_to_id, id_to_bone) including synthetic orphan IDs.
+
+        Reuses the mapping cached by read_active_layer() if already called on
+        this instance. Use after read_active_layer() when int-keyed data is
+        required for Rust FFI calls.
+        """
+        if hasattr(self, '_bone_to_id') and hasattr(self, '_id_to_bone'):
+            return self._bone_to_id, self._id_to_bone
+        bone_to_id, id_to_bone = self.storage.get_unified_mapping(self.obj)
+        self._bone_to_id = bone_to_id
+        self._id_to_bone = id_to_bone
+        return bone_to_id, id_to_bone
+
+    def get_locks_by_id(self) -> dict:
+        """Return bone locks keyed by integer VG index (unified mapping).
+
+        Use instead of get_bone_locks() when passing lock data to Rust
+        functions that require int keys.
+        """
+        return self._locks_by_id()
+
+    def get_cached_mesh_neighbors(self) -> dict[int, list[int]]:
+        """Return vertex-neighbor topology map for Rust smooth/sharpen ops.
+
+        Delegates to TopologyCacheManager. Shares the class-level cache
+        with any other caller using the manager.
+        """
+        return TopologyCacheManager.get_cached_mesh_neighbors(self.mesh, self.storage)
+
+    def _read_active_layer_int(self, bone_to_id: dict) -> dict:
+        """Read the active layer as an int-keyed dict and cache orphan entries.
+
+        In EDIT mode with temp VGs present, reads from __ssp_* BMesh channels.
+        Otherwise reads from ss_layer_N storage. Populates self._orphan_entries
+        with any weight entries whose bone name is absent from the current
+        vertex group list, so _write_active_layer_string() can re-merge them.
+        """
+        from ..layer_storage.temp_vg_bridge import has_temp_vgs, read_temp_vgs_from_bm
+        from ...core_subsystems.rust_weight_engine import RustWeightEngine as _RWE_local
+
+        if self.obj.mode == 'EDIT' and has_temp_vgs(self.obj):
+            import bmesh as _bm_mod
+            bm = _bm_mod.from_edit_mesh(self.mesh)
+            raw, _, _ = read_temp_vgs_from_bm(bm, self.obj)
+        else:
+            raw = self.storage.read_active_layer_dict()
+
+        self._orphan_entries = {
+            v_idx: {b: w for b, w in weights.items() if b not in bone_to_id}
+            for v_idx, weights in raw.items()
+            if any(b not in bone_to_id for b in weights)
+        }
+        return _RWE_local.map_layer_to_int(raw, bone_to_id)
+
+    def _locks_by_id(self) -> dict:
+        """Return bone locks keyed by unified VG index (int), for Rust FFI callers."""
+        name_locks = self._layer_mgr.get_bone_locks(
+            self.storage.read_meta_list(), self.active_layer_index
+        )
+        bone_to_id, _ = self.storage.get_unified_mapping(self.obj)
+        return {bone_to_id[name]: locked
+                for name, locked in name_locks.items()
+                if name in bone_to_id}
