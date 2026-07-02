@@ -26,7 +26,7 @@ Each extension owns:
 
 | Tab | Domains |
 |---|---|
-| `LAYER` | `layer_viewer` (non-collapsible), `data_io`, `weight_transfer` |
+| `LAYER` | `layer_viewer` (non-collapsible), `weight_transfer` (owns Export/Import JSON too) |
 | `SKINNING` | `deform_bone_viewer` (non-collapsible), `weight_apply`, `mirror`, `clipboard`, `auto_block_weight`, `circle_tool_adjust`, `controller` |
 | `PREFERENCE` | `bone_picker`, `multi_color_preview` (hosted in Add-on Preferences) |
 

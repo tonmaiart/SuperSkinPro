@@ -176,7 +176,7 @@ def _auto_init_layers():
 
 # ⚡ Performance cache: bone display order — invalidated when armature/mesh changes
 _display_order_cache = {}
-_display_order_cache_key = None  # (mesh_name, arm_name)
+_display_order_cache_key = None  # (mesh_name, arm_name, frozenset(deform_bone_names))
 
 # ⚡ Performance cache: influence scanner visible bones — invalidated on layer/blob change
 _influence_visible_cache = {}
@@ -197,7 +197,7 @@ def _get_cached_display_order(arm_obj, deform_bones):
         if arm_obj.data:
             mesh_name = getattr(arm_obj.data, 'name', '')
 
-    cache_key = (mesh_name, arm_name, len(deform_bones))
+    cache_key = (mesh_name, arm_name, frozenset(deform_bones))
 
     if _display_order_cache_key == cache_key and _display_order_cache:
         return _display_order_cache
@@ -316,6 +316,12 @@ def _get_display_order_impl(context, data):
     if arm_obj:
         deform_bones = {b.name for b in arm_obj.data.bones if b.use_deform}
 
+    DebugLogService.log(
+        "bone_id",
+        f"_get_display_order_impl(): arm_obj={arm_obj.name if arm_obj else None!r} "
+        f"deform_bones={sorted(deform_bones)!r} vg_names={[vg.name for vg in items]!r}",
+    )
+
     if arm_obj and deform_bones:
         try:
             ordered_names = _get_cached_display_order(arm_obj, deform_bones)
@@ -329,6 +335,12 @@ def _get_display_order_impl(context, data):
             idx = name_to_idx.get(name)
             if idx is not None:
                 result.append(idx)
+
+        DebugLogService.log(
+            "bone_id",
+            f"_get_display_order_impl(): ordered_names={ordered_names!r} "
+            f"result_indices={result!r}",
+        )
         return result
     else:
         return list(range(len(items)))
@@ -539,6 +551,7 @@ def sync_layers_to_ui_collection(obj):
 
 @bpy.app.handlers.persistent
 def _superskin_layers_depsgraph_handler(scene, depsgraph):
+    armature_touched = False
     for update in depsgraph.updates:
         obj = update.id
         if isinstance(obj, bpy.types.Object) and obj.type == 'MESH':
@@ -556,6 +569,31 @@ def _superskin_layers_depsgraph_handler(scene, depsgraph):
                     "bone_id",
                     f"_superskin_layers_depsgraph_handler() EXCEPTION on "
                     f"obj={getattr(obj, 'name', '?')!r}: {e!r}\n{traceback.format_exc()}",
+                )
+        elif (isinstance(obj, bpy.types.Object) and obj.type == 'ARMATURE') \
+                or isinstance(obj, bpy.types.Armature):
+            # Bone-only edits (e.g. toggling `use_deform`, renaming a bone,
+            # applying an armature preset) tag the Armature ID, never the
+            # Mesh object — the MESH branch above never sees them, so the
+            # bones mirror collection silently goes stale until some
+            # unrelated mesh-side update happens to fire. Re-sync every
+            # mesh that rigs against this armature so `use_deform` toggles
+            # are reflected immediately.
+            armature_touched = True
+
+    if armature_touched:
+        for mesh_obj in bpy.data.objects:
+            if mesh_obj.type != 'MESH' or "ss_layers_meta" not in mesh_obj.data:
+                continue
+            if not any(m.type == 'ARMATURE' and m.object for m in mesh_obj.modifiers):
+                continue
+            try:
+                sync_bones_to_ui_collection(mesh_obj)
+            except Exception as e:
+                DebugLogService.log(
+                    "bone_id",
+                    f"_superskin_layers_depsgraph_handler() ARMATURE-resync EXCEPTION on "
+                    f"obj={mesh_obj.name!r}: {e!r}\n{traceback.format_exc()}",
                 )
 
 

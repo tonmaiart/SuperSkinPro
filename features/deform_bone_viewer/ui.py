@@ -378,6 +378,18 @@ class SUPERSKIN_MT_bone_extra_overflow(bpy.types.Menu):
 # per sync_bones_to_ui_collection()'s "never call from draw()" contract.
 _bones_resync_pending = False
 
+# Per-object last vertex_group count the resync timer was attempted at.
+# "Mask row missing" alone isn't a reliable staleness signal: after an F3
+# script reload (which doesn't run load_post) or a bone-only Armature edit
+# (which doesn't tag the Mesh object in the depsgraph — see
+# interface/utils/utils.py::_superskin_layers_depsgraph_handler), the
+# mirror collection can already have its Mask row yet still be missing
+# every real bone row. Re-attempt once whenever the live vertex_group count
+# changes from what was last attempted, instead of only when the Mask row
+# itself is absent — bounded so it doesn't re-schedule every redraw when a
+# mesh genuinely has zero deform-matching vertex groups.
+_bones_resync_attempted_vg_count = {}
+
 
 def _force_bones_resync():
     global _bones_resync_pending
@@ -425,13 +437,19 @@ def draw_influence_list_system(layout, context, rows=8):
         )
 
     global _bones_resync_pending
-    if ("ss_layers_meta" in obj.data and not mask_rows
-            and not _bones_resync_pending):
+    vg_count = len(obj.vertex_groups)
+    mask_missing = not mask_rows
+    only_mask_present = len(col) <= 1 and vg_count > 0
+    already_attempted = _bones_resync_attempted_vg_count.get(obj.name) == vg_count
+    if ("ss_layers_meta" in obj.data and (mask_missing or only_mask_present)
+            and not _bones_resync_pending and not already_attempted):
         _bones_resync_pending = True
+        _bones_resync_attempted_vg_count[obj.name] = vg_count
         CoreFacade.debug_log(
             "bone_id",
             f"draw_influence_list_system(): scheduling _force_bones_resync() "
-            f"timer for obj={obj.name!r} (mirror collection missing Mask row)",
+            f"timer for obj={obj.name!r} (mask_missing={mask_missing} "
+            f"only_mask_present={only_mask_present} vg_count={vg_count})",
         )
         bpy.app.timers.register(_force_bones_resync, first_interval=0.0)
 

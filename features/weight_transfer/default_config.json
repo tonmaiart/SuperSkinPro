@@ -1,1 +1,6 @@
-{}
+{
+  "layer_output": "SEPARATE",
+  "insert_method": "REPLACE",
+  "transfer_method": "CLOSEST_DISTANCE",
+  "auto_assign_armature": true
+}

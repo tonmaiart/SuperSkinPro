@@ -12,7 +12,7 @@ backward compatibility).
 Registration order controls insertion order within each tab.
 The viewer domains must be first so they render at the top of their tabs:
 
-  LAYER tab   : layer_viewer (first, non-collapsible) → data_io → weight_transfer
+  LAYER tab   : layer_viewer (first, non-collapsible) → weight_transfer (owns Export/Import JSON too)
   SKINNING tab: deform_bone_viewer (first, non-collapsible) → weight_apply → mirror → clipboard → auto_block → circle_tool_adjust
   PREFERENCE  : bone_picker → multi_color_preview (hosted under SYSTEM tab)
 """
@@ -29,8 +29,7 @@ from . import auto_block_weight
 from . import mirror
 from . import clipboard
 from . import bone_picker
-from . import weight_transfer      # LAYER tab
-from . import data_io              # LAYER tab
+from . import weight_transfer      # LAYER tab (owns Export/Import JSON too)
 from . import multi_color_preview
 from . import circle_tool_adjust
 
@@ -46,7 +45,6 @@ _modules = (
     clipboard,
     bone_picker,
     weight_transfer,
-    data_io,
     multi_color_preview,
     circle_tool_adjust,
     controller,

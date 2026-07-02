@@ -154,7 +154,6 @@ _modules = (
     clipboard,
     bone_picker,
     weight_transfer,
-    data_io,
     multi_color_preview,
     circle_tool_adjust,
     controller,
@@ -178,7 +177,6 @@ _modules = (
 | `controller` | `features/controller/` | *(cross-cutting, no actions)* | `SKINNING` |
 | `bone_picker` | `features/bone_picker/` | `start_bone_picker`, `stop_bone_picker`, `clear_multi_selection` | `PREFERENCE` |
 | `multi_color_preview` | `features/multi_color_preview/` | `start_multi_color`, `stop_multi_color`, `toggle_multi_color` | `PREFERENCE` |
-| `weight_transfer` | `features/weight_transfer/` | `transfer_weight_maya` | `LAYER` |
-| `data_io` | `features/data_io/` | *(no actions — self-contained export/import operators)* | `LAYER` |
+| `weight_transfer` | `features/weight_transfer/` | `transfer_weight_maya` (also owns Export/Import Weight JSON, self-contained operators, merged in from the former `data_io` domain) | `LAYER` |
 
 See each package's local `README.md` for domain-specific dataflow, file manifests, and guardrails.

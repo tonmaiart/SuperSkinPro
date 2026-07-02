@@ -54,8 +54,7 @@ list of all domains.
 | pie menu, scene mode, enter/exit edit mode, safe shrink | `features/controller/` | ✅ |
 | bone picker, alt+2, diamond wedge overlay | `features/bone_picker/` | ✅ |
 | multi color preview, alt+3, per-bone color overlay | `features/multi_color_preview/` | ✅ |
-| weight transfer, maya-style transfer | `features/weight_transfer/` | ✅ |
-| export/import json, data io, weight json | `features/data_io/` | ✅ |
+| weight transfer, maya-style transfer, export/import json, data io, weight json | `features/weight_transfer/` | ✅ |
 | "which domains exist", domain registry, new feature | `features/` (root) | ✅ |
 
 ### Other documented layers

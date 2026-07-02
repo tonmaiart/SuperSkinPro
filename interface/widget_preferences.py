@@ -2,8 +2,8 @@
 
 The panel adapts its content to the current Blender interaction mode:
 
-  OBJECT mode  — collapsible LAYER sections (LayerViewer with entry gate, data_io,
-                 weight_transfer).
+  OBJECT mode  — collapsible LAYER sections (LayerViewer with entry gate,
+                 weight_transfer — which also owns Export/Import JSON).
 
   EDIT_MESH    — collapsible SKINNING sections (DeformBoneViewer with exit gate,
                  weight_apply, mirror, …).
