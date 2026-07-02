@@ -13,6 +13,14 @@ import bpy
 from ...core.shaders.shader_manager import ShaderManager
 from .preferences_service import PreferencesService
 
+# New, intentional one-way exception to sibling-subsystem isolation (alongside
+# the ShaderManager and PreferencesService exceptions already used in this
+# file): `preferences` nests SSPrefDebug into SSPrefRoot.debug so the
+# "Developer / Debug Tools" panel has a single PropertyGroup root to draw
+# from, the same way license/customize settings are nested here rather than
+# living as their own top-level WindowManager properties.
+from ..debug_logging.property_groups import SSPrefDebug
+
 
 def _on_license_field_changed(self, context):
     # Hoisted import: PreferencesService.
@@ -109,6 +117,7 @@ class SSPrefRoot(bpy.types.PropertyGroup):
     customize: bpy.props.PointerProperty(type=SSPrefCustomize)
     ui_state:  bpy.props.PointerProperty(type=SSPrefCustomizeUIState)
     license:   bpy.props.PointerProperty(type=SSPrefLicense)
+    debug:     bpy.props.PointerProperty(type=SSPrefDebug)
 
 
 # ── Registration helpers ──
@@ -121,6 +130,7 @@ _classes = [
     SSPrefCustomize,
     SSPrefCustomizeUIState,
     SSPrefLicense,
+    SSPrefDebug,
     SSPrefRoot,
 ]
 

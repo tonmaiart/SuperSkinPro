@@ -18,6 +18,7 @@ module-level helpers used exclusively by _write_active_layer_string().
 """
 
 from ...core_subsystems.rust_weight_engine import RustWeightEngine
+from ...core_subsystems.debug_logging import DebugLogService
 from ..ui_controller import pipeline
 
 
@@ -156,6 +157,10 @@ class WriteFacadeMixin:
             v_idx: {self._bone_to_id[b]: w for b, w in weights.items() if b in self._bone_to_id}
             for v_idx, weights in layer_str.items()
         }
+        DebugLogService.log(
+            "core_pipeline",
+            f"write_active_layer(): {len(result_int)} verts, obj.mode={self.obj.mode}",
+        )
         self._write_active_layer_string(result_int, self._id_to_bone, None, is_mask_mode=False)
         self.finish(color_only=color_only)
 
@@ -169,6 +174,13 @@ class WriteFacadeMixin:
         normalization are applied before writing.
         """
         from ..layer_storage.temp_vg_bridge import has_temp_vgs, write_layer_to_temp_vgs_bm
+
+        DebugLogService.log(
+            "core_pipeline",
+            f"_write_active_layer_string(): layer_int verts={len(layer_int)} "
+            f"mask_dict={'None' if mask_dict is None else f'{len(mask_dict)} verts'} "
+            f"is_mask_mode={is_mask_mode}",
+        )
 
         layer_str = RustWeightEngine.map_layer_to_string(layer_int, id_to_bone)
         orphan_entries = getattr(self, "_orphan_entries", {})

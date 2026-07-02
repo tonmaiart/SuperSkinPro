@@ -97,6 +97,12 @@ class WeightApplyFeature(UnifiedFeatureExtension):
         is_mask = core_facade.is_mask_context()
         active_vg_id = core_facade.get_active_vg_id()
 
+        core_facade.debug_log(
+            "feature_domains",
+            f"weight_apply.execute() action={action!r} is_mask={is_mask} "
+            f"active_vg_id={active_vg_id}",
+        )
+
         layer_str = core_facade.read_active_layer()
         bone_to_id, id_to_bone = core_facade.get_unified_mapping()
         layer_int = {
@@ -166,6 +172,8 @@ class WeightApplyFeature(UnifiedFeatureExtension):
                 for v_idx, weights in res_layer.items()
             }
             core_facade.write_active_layer(res_layer_str, color_only=True)
+
+        core_facade.debug_log("feature_domains", f"weight_apply.execute() action={action!r} done")
 
         return {"status": "FINISHED"}
 

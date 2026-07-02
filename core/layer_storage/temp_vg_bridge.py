@@ -17,6 +17,8 @@ All functions operate in OBJECT mode. Callers must ensure mode before calling.
 
 import json
 
+from ...core_subsystems.debug_logging import DebugLogService
+
 PREFIX = "__ssp_"
 MASK_VG_NAME = "__ssp_m"
 META_VG_NAME = "__ssp_meta"
@@ -256,6 +258,12 @@ def write_layer_to_temp_vgs_bm(obj, mesh, layer_str: dict, id_to_bone: dict,
     """
     import bmesh as _bm
 
+    DebugLogService.log(
+        "temp_vg",
+        f"write_layer_to_temp_vgs_bm() ENTRY: layer_str verts={len(layer_str)} "
+        f"mask_dict={'None' if mask_dict is None else f'{len(mask_dict)} verts'}",
+    )
+
     bone_to_vg_index = {name: idx for idx, name in id_to_bone.items()}
 
     ssp_vg_idx_map: dict = {}
@@ -295,6 +303,12 @@ def write_layer_to_temp_vgs_bm(obj, mesh, layer_str: dict, id_to_bone: dict,
     # docs/bug-history/0020.
     all_ssp_indices: set = set(ssp_vg_idx_map.values())
 
+    DebugLogService.log(
+        "temp_vg",
+        f"mask_vg_idx={mask_vg_idx} all_ssp_indices={sorted(all_ssp_indices)} "
+        f"(mask_vg_idx must NOT appear in all_ssp_indices — see bug-history/0020)",
+    )
+
     bm = _bm.from_edit_mesh(mesh)
     bm.verts.ensure_lookup_table()
     deform = bm.verts.layers.deform.verify()
@@ -325,6 +339,8 @@ def write_layer_to_temp_vgs_bm(obj, mesh, layer_str: dict, id_to_bone: dict,
                 v_deform[mask_vg_idx] = float(w)
             elif mask_vg_idx in v_deform:
                 del v_deform[mask_vg_idx]
+
+    DebugLogService.log("temp_vg", "write_layer_to_temp_vgs_bm() EXIT: BMesh updated")
 
     _bm.update_edit_mesh(mesh, loop_triangles=True, destructive=False)
 

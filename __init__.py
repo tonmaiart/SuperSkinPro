@@ -15,6 +15,12 @@ closed subsystem.
 
 from importlib import reload
 
+# Blender Extensions assign a repository-namespaced runtime package name
+# (e.g. "bl_ext.user_default.superskinpro"), not the plain folder/manifest id.
+# AddonPreferences.bl_idname must match this exactly or Blender silently shows
+# no preferences panel for the addon (no error) -- see interface/addon_preferences.py.
+ADDON_PACKAGE = __package__
+
 # ==============================================================================
 # FORCE RELOAD — bottom-up order: foundations → features → interface
 # ==============================================================================

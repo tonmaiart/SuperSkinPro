@@ -306,6 +306,18 @@ class CoreFacade(ReadFacadeMixin, WriteFacadeMixin, VisualizerFacadeMixin):
         return RustWeightEngine(tag)
 
     @classmethod
+    def debug_log(cls, category: str, message: str) -> None:
+        """Print *message* if *category* is enabled in Preferences > Developer / Debug Tools.
+
+        The only sanctioned way for features/ to reach DebugLogService --
+        ST_PURE_BACKEND forbids importing core_subsystems/ directly from a
+        feature domain. core/ files may import DebugLogService directly
+        instead of going through this facade method.
+        """
+        from ...core_subsystems.debug_logging import DebugLogService
+        DebugLogService.log(category, message)
+
+    @classmethod
     def get_flat_array_bridge(cls):
         from ...core_subsystems.rust_weight_engine import RustWeightEngine
         return RustWeightEngine

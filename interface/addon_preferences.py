@@ -10,10 +10,17 @@ Blender location (Edit > Preferences > Add-ons > Super Skin Pro).
 import bpy
 
 from . import widget_preferences
+from .. import ADDON_PACKAGE
 
 
 class SSP_AddonPreferences(bpy.types.AddonPreferences):
-    bl_idname = "SuperSkinPro"
+    # Must match the addon's actual runtime module name for Blender to locate
+    # this class's instance in context.preferences.addons[...]. Blender
+    # Extensions assign a repository-namespaced package name at install time
+    # (e.g. "bl_ext.user_default.superskinpro"), not the manifest "id" or
+    # folder name -- a hardcoded string here silently breaks the whole
+    # preferences panel (no error, it just never shows). See __init__.py.
+    bl_idname = ADDON_PACKAGE
 
     def draw(self, context):
         widget_preferences.draw_system_for_addon_prefs(self.layout, context)

@@ -23,6 +23,7 @@ Each ``UnifiedFeatureExtension`` exposes ``draw_section(layout, context)``,
 import bpy
 
 from ..core_subsystems.license_gateway import LicenseGateway
+from ..core_subsystems.debug_logging import DebugLogService
 
 
 # =========================================================================
@@ -180,6 +181,10 @@ def _draw_system(layout, context, prefs):
     layout.separator()
     box = layout.box()
     box.label(text="Developer / Debug Tools", icon='CONSOLE')
+    debug = prefs.debug
+    col = box.column(align=True)
+    for attr in DebugLogService.CATEGORIES:
+        col.prop(debug, attr)
     box.operator("superskin.reset_license_activation", text="Reset All Activate", icon='TRASH')
     box.operator("superskin.reset_prefs", text="Reset to Default", icon='LOOP_BACK')
 
