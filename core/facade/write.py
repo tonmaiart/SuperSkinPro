@@ -106,6 +106,27 @@ class WriteFacadeMixin:
         self.storage.write_layer_dict(self.active_layer_index, layer_dict)
 
     def write_mask_dict(self, mask_dict: dict):
+        """Write the active layer's mask to the correct target for the current mode.
+
+        Outside Edit Mode, writes straight to ss_mask_N via storage. In Edit
+        Mode with __ssp_* temp VGs present, that direct write is invisible to
+        the live BMesh state and gets clobbered by the Exit-Edit-Mode bake-back
+        (see docs/bug-history/0020), so this instead re-reads the current
+        (unchanged) bone-weight layer and routes both through
+        _write_active_layer_string()/write_layer_to_temp_vgs_bm() together,
+        matching the pattern already used by weight_apply_feature.py's mask ops.
+        """
+        from ..layer_storage.temp_vg_bridge import has_temp_vgs
+
+        if self.obj.mode == 'EDIT' and has_temp_vgs(self.obj):
+            layer_str = self.read_active_layer()
+            result_int = {
+                v_idx: {self._bone_to_id[b]: w for b, w in weights.items() if b in self._bone_to_id}
+                for v_idx, weights in layer_str.items()
+            }
+            self._write_active_layer_string(result_int, self._id_to_bone, mask_dict, is_mask_mode=True)
+            return
+
         self.storage.write_mask_dict(self.active_layer_index, mask_dict)
 
     def finish(self, *, color_only: bool = False):

@@ -161,6 +161,8 @@ class RustWeightEngine:
 
     # ── Flat-array bridge static interface ────────────────────────────────────
 
+    MASK_SENTINEL = _fab.MASK_SENTINEL
+
     @staticmethod
     def layer_to_csr(layer_int: dict, num_verts: int, **kwargs):
         """Convert ``{v_idx: {bone_id: weight}}`` to CSR flat arrays.

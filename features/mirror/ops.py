@@ -34,10 +34,14 @@ class OBJECT_OT_MirrorWeights(bpy.types.Operator):
             do_mask = is_mask or both_data
             do_layer = (not is_mask) or both_data
 
-            if do_layer and not do_mask:
-                # Bone-only mirror: warn early if nothing would happen at all.
-                # (skip this check when both_data is on — mask channel still
-                # mirrors successfully even if the bone side has no pairs)
+            if do_layer:
+                # Pre-check whether the bone-weight channel has any pairs to
+                # mirror. When both_data is on, a missing bone side used to
+                # fail completely silently (the mask channel would still
+                # succeed, so the operator returned FINISHED with no
+                # feedback) — now it reports a WARNING but still lets the
+                # mask channel mirror. Bone-only mirrors still CANCEL as
+                # before, since nothing at all would happen.
                 sr_raw = MirrorPreferencesService.get_mirror_search_replace_pairs()
                 pairs = generate_pairs(
                     vg_names=[vg.name for vg in facade.get_vertex_groups()],
@@ -47,8 +51,15 @@ class OBJECT_OT_MirrorWeights(bpy.types.Operator):
                     direction=MirrorPreferencesService.get_mirror_direction(),
                 )
                 if not pairs:
-                    self.report({'WARNING'}, "No mirror pairs found.")
-                    return {'CANCELLED'}
+                    if not do_mask:
+                        self.report({'WARNING'}, "No mirror pairs found.")
+                        return {'CANCELLED'}
+                    self.report(
+                        {'WARNING'},
+                        "No bone weight mirror pairs found — only the mask "
+                        "was mirrored. Check that a matching Armature modifier "
+                        "is present and bone names match a search/replace pair.",
+                    )
         except ValueError:
             return {'CANCELLED'}
 

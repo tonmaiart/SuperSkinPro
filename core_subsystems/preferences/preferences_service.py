@@ -58,32 +58,52 @@ def _default_mask_stops() -> list:
 class PreferencesService:
     """Stateless service for reading/writing preferences via JSON files."""
 
+    # Reentrancy guard: True while load()/reset_to_default() is populating
+    # PropertyGroups. Many fields (e.g. SSPrefMirrorSRItem.search_text) carry
+    # a write-through `update=` callback that calls save_to_user_file()
+    # immediately on assignment. Populating a multi-field group (or a
+    # CollectionProperty rebuilt item-by-item) therefore fires that save
+    # repeatedly mid-populate, each time serializing whatever is *currently*
+    # sitting in every OTHER extension's PropertyGroup -- including
+    # extensions the outer loop hasn't reached yet, which still hold the
+    # blank type-defaults a fresh WindowManager starts with. That mid-flight
+    # snapshot gets written to user.json, permanently dropping sections for
+    # extensions processed later in the same load() call (see
+    # docs/bug-history/0014 for the single-field-order version of this same
+    # write-through hazard; this is the general form). Suppressing saves for
+    # the duration of load()/reset_to_default() removes the reentrancy.
+    _loading = False
+
     @classmethod
     def load(cls) -> None:
         """Read default.json + user.json, merge, populate core + extension PropertyGroups.
 
         Hoisted imports: PrefsExtensionRegistry, UnifiedRegistry.
         """
-        default = _get_default_dict()
-        user    = io.load_json_safe(io.user_json_path())
-        merged  = io.deep_merge(default, user)
+        cls._loading = True
+        try:
+            default = _get_default_dict()
+            user    = io.load_json_safe(io.user_json_path())
+            merged  = io.deep_merge(default, user)
 
-        prefs = bpy.context.window_manager.superskin_prefs
-        cls._populate_from_dict(prefs, merged)
+            prefs = bpy.context.window_manager.superskin_prefs
+            cls._populate_from_dict(prefs, merged)
 
-        # Load each feature extension using its own default_config.json + user section.
-        # UnifiedRegistry path
-        for ext in UnifiedRegistry.get_all():
-            defaults_path = ext.get_defaults_path()
-            if defaults_path is None:
-                continue
-            ext_defaults = io.load_json_safe(defaults_path)
-            user_section = _get_nested(user, ext.get_json_path())
-            ext_data     = io.deep_merge(ext_defaults, user_section)
-            try:
-                ext.populate(ext_data)
-            except Exception as e:
-                print(f"⚠️ [SuperSkinPro] Failed to load unified prefs for '{ext.get_id()}': {e}")
+            # Load each feature extension using its own default_config.json + user section.
+            # UnifiedRegistry path
+            for ext in UnifiedRegistry.get_all():
+                defaults_path = ext.get_defaults_path()
+                if defaults_path is None:
+                    continue
+                ext_defaults = io.load_json_safe(defaults_path)
+                user_section = _get_nested(user, ext.get_json_path())
+                ext_data     = io.deep_merge(ext_defaults, user_section)
+                try:
+                    ext.populate(ext_data)
+                except Exception as e:
+                    print(f"⚠️ [SuperSkinPro] Failed to load unified prefs for '{ext.get_id()}': {e}")
+        finally:
+            cls._loading = False
 
         print(f"🔍 [SuperSkinPro Prefs] load() complete: "
               f"single_ramp={len(prefs.customize.single_ramp.stops)} stops, "
@@ -94,8 +114,17 @@ class PreferencesService:
     def save_to_user_file(cls) -> None:
         """Serialize core + all extension prefs and write to user.json.
 
+        No-op while load()/reset_to_default() is populating PropertyGroups
+        (see the `_loading` docstring above) -- those callers already end
+        with every PropertyGroup in its final, fully-consistent state, so
+        nothing needs saving mid-populate, and doing so would only persist a
+        torn snapshot.
+
         Hoisted imports: PrefsExtensionRegistry, UnifiedRegistry.
         """
+        if cls._loading:
+            return
+
         prefs = bpy.context.window_manager.superskin_prefs
         data  = cls._dict_from_property_group(prefs)
 
@@ -112,22 +141,29 @@ class PreferencesService:
     def reset_to_default(cls) -> None:
         """Load default values directly (no merge) into all PropertyGroups.
 
+        Does not write to disk -- see the `_loading` guard docstring above;
+        this suppresses the same write-through reentrancy that load() does.
+
         Hoisted imports: PrefsExtensionRegistry, UnifiedRegistry.
         """
-        default = _get_default_dict()
-        prefs   = bpy.context.window_manager.superskin_prefs
-        cls._populate_from_dict(prefs, default)
+        cls._loading = True
+        try:
+            default = _get_default_dict()
+            prefs   = bpy.context.window_manager.superskin_prefs
+            cls._populate_from_dict(prefs, default)
 
-        # UnifiedRegistry path
-        for ext in UnifiedRegistry.get_all():
-            defaults_path = ext.get_defaults_path()
-            if defaults_path is None:
-                continue
-            ext_defaults = io.load_json_safe(defaults_path)
-            try:
-                ext.populate(ext_defaults)
-            except Exception as e:
-                print(f"⚠️ [SuperSkinPro] Failed to reset unified prefs for '{ext.get_id()}': {e}")
+            # UnifiedRegistry path
+            for ext in UnifiedRegistry.get_all():
+                defaults_path = ext.get_defaults_path()
+                if defaults_path is None:
+                    continue
+                ext_defaults = io.load_json_safe(defaults_path)
+                try:
+                    ext.populate(ext_defaults)
+                except Exception as e:
+                    print(f"⚠️ [SuperSkinPro] Failed to reset unified prefs for '{ext.get_id()}': {e}")
+        finally:
+            cls._loading = False
 
     # ── Resolved accessors for core prefs (hot-path) ──
 

@@ -29,8 +29,9 @@ def get_bone_centers(core_facade):
                 centers[vg.name] = (
                     arm_mat @ ((bone.head_local + bone.tail_local) * 0.5)
                 ).to_tuple()
-                continue
-        centers[vg.name] = None
+        # Vertex groups without a matching bone are omitted rather than set
+        # to None — the Rust FFI signature requires (f64, f64, f64) tuples
+        # for every value, and a missing key is already handled on that side.
     return centers
 
 
@@ -131,13 +132,47 @@ def build_layer_mirror_plan(core_facade, axis, direction, sr_raw):
 
     Returns None when no matching pairs exist (caller skips the layer channel).
     """
+    vg_names = [vg.name for vg in core_facade.get_vertex_groups()]
+    bone_centers = get_bone_centers(core_facade)
+    CoreFacade.debug_log(
+        "feature_domains",
+        f"mirror.build_layer_mirror_plan(): sr_raw={sr_raw!r} "
+        f"vg_names_sample={vg_names[:10]!r}",
+    )
     name_pairs = generate_pairs(
-        vg_names=[vg.name for vg in core_facade.get_vertex_groups()],
-        bone_centers=get_bone_centers(core_facade),
+        vg_names=vg_names,
+        bone_centers=bone_centers,
         sr_list=sr_raw,
         axis=axis,
         direction=direction,
     )
+    CoreFacade.debug_log(
+        "feature_domains",
+        f"mirror.build_layer_mirror_plan(): vg_names={len(vg_names)} "
+        f"bone_centers={len(bone_centers)} name_pairs={name_pairs}",
+    )
+
+    # Cross-check: for every identity (unmatched) pair, redo the *.l -> *.r
+    # style replace in plain Python and check byte-exact presence in
+    # vg_names. Surfaces case/whitespace/naming mismatches invisible from
+    # the Rust-side result alone.
+    vg_name_set = set(vg_names)
+    for src, tgt in name_pairs.items():
+        if src != tgt:
+            continue
+        for search_text, replace_text in sr_raw:
+            if not search_text or not replace_text or '*' not in search_text:
+                continue
+            if search_text.replace('*', '') not in src:
+                continue
+            candidate = src.replace(search_text.replace('*', ''), replace_text.replace('*', ''))
+            CoreFacade.debug_log(
+                "feature_domains",
+                f"mirror.build_layer_mirror_plan(): identity-pair check src={src!r} "
+                f"rule=({search_text!r},{replace_text!r}) candidate={candidate!r} "
+                f"present_in_vg_names={candidate in vg_name_set}",
+            )
+
     if not name_pairs:
         return None
 
@@ -147,6 +182,10 @@ def build_layer_mirror_plan(core_facade, axis, direction, sr_raw):
         for src, tgt in name_pairs.items()
         if src in bone_to_id and tgt in bone_to_id
     }
+    CoreFacade.debug_log(
+        "feature_domains",
+        f"mirror.build_layer_mirror_plan(): id_pairs={id_pairs}",
+    )
     return id_pairs if id_pairs else None
 
 
@@ -167,10 +206,21 @@ def execute_mirror_pipeline(core_facade):
     do_mask = is_mask or both_data
     do_layer = (not is_mask) or both_data
 
+    CoreFacade.debug_log(
+        "feature_domains",
+        f"mirror.execute_mirror_pipeline(): is_mask={is_mask} both_data={both_data} "
+        f"do_mask={do_mask} do_layer={do_layer} obj.mode={core_facade.get_obj().mode} "
+        f"axis={axis} direction={direction}",
+    )
+
     if do_layer:
         id_pairs = build_layer_mirror_plan(core_facade, axis, direction, sr_raw)
         if id_pairs is None:
             do_layer = False
+            CoreFacade.debug_log(
+                "feature_domains",
+                "mirror.execute_mirror_pipeline(): id_pairs is None -> do_layer disabled",
+            )
 
     if not do_mask and not do_layer:
         raise ValueError("No mirror pairs found for either channel.")
@@ -198,13 +248,27 @@ def execute_mirror_pipeline(core_facade):
             }
             for v_idx, weights in layer_str.items()
         }
+        locks_by_id = core_facade.get_locks_by_id()
+        CoreFacade.debug_log(
+            "feature_domains",
+            f"mirror.execute_mirror_pipeline(): layer_int verts={len(layer_int)} "
+            f"id_pairs={id_pairs} locks_by_id={locks_by_id}",
+        )
         res_layer_int = apply(
             layer_dict=layer_int,
             id_pairs=id_pairs,
-            vertex_groups_lock=core_facade.get_locks_by_id(),
+            vertex_groups_lock=locks_by_id,
             vertex_coords=core_facade.get_vertex_coordinates(),
             axis=axis,
             direction=direction,
+        )
+        changed_verts = sum(
+            1 for v_idx, w in res_layer_int.items() if w != layer_int.get(v_idx)
+        )
+        CoreFacade.debug_log(
+            "feature_domains",
+            f"mirror.execute_mirror_pipeline(): res_layer_int verts={len(res_layer_int)} "
+            f"changed_verts={changed_verts}",
         )
         res_layer_str = {
             int(v_idx): {
@@ -216,6 +280,11 @@ def execute_mirror_pipeline(core_facade):
         }
         # write_active_layer calls finish() internally — no explicit finish needed.
         core_facade.write_active_layer(res_layer_str)
+        CoreFacade.debug_log(
+            "feature_domains",
+            f"mirror.execute_mirror_pipeline(): write_active_layer() done, "
+            f"res_layer_str verts={len(res_layer_str)}",
+        )
     else:
         # Mask-only path: write_mask_dict does not call finish.
         core_facade.finish_color_only()

@@ -153,10 +153,14 @@ class MirrorFeature(UnifiedFeatureExtension):
         )
 
         col_btns = row.column(align=True)
-        mapping_column = col_btns.column(align=True)
-        mapping_column.operator("superskin.add_mirror_sr", text="", icon='ADD')
-        mapping_column.enabled = 0 <= idx < len(sr_coll)
-        rm = mapping_column.operator("superskin.remove_mirror_sr", text="", icon='REMOVE')
+        # "Add" must stay enabled even when the list is empty -- it's the
+        # only way to recover from an empty list through the UI. Only
+        # "Remove" needs a valid selection, so its enabled state is scoped
+        # to its own sub-layout rather than the shared column.
+        col_btns.operator("superskin.add_mirror_sr", text="", icon='ADD')
+        remove_col = col_btns.column(align=True)
+        remove_col.enabled = 0 <= idx < len(sr_coll)
+        rm = remove_col.operator("superskin.remove_mirror_sr", text="", icon='REMOVE')
         rm.index = idx
 
     # ── JSON persistence ──────────────────────────────────────────────────
