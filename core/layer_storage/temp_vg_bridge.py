@@ -286,9 +286,14 @@ def write_layer_to_temp_vgs_bm(obj, mesh, layer_str: dict, id_to_bone: dict,
     mask_vg = obj.vertex_groups.get(MASK_VG_NAME)
     mask_vg_idx = mask_vg.index if mask_vg is not None else None
 
+    # NOTE: mask_vg_idx is intentionally NOT added to all_ssp_indices here.
+    # all_ssp_indices is the "clear-if-absent-from-new" scope for the BONE
+    # weight sync loop below, and `new` (built from layer_str) never contains
+    # the mask VG index. Adding mask_vg_idx to this set previously caused the
+    # bone-weight loop to delete the mask VG entry for every vertex on every
+    # single write_layer_to_temp_vgs_bm() call, regardless of mask_dict — see
+    # docs/bug-history/0020.
     all_ssp_indices: set = set(ssp_vg_idx_map.values())
-    if mask_vg_idx is not None:
-        all_ssp_indices.add(mask_vg_idx)
 
     bm = _bm.from_edit_mesh(mesh)
     bm.verts.ensure_lookup_table()

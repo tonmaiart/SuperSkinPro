@@ -170,11 +170,19 @@ class ReadFacadeMixin:
         return _RWE_local.map_layer_to_int(raw, bone_to_id)
 
     def _locks_by_id(self) -> dict:
-        """Return bone locks keyed by unified VG index (int), for Rust FFI callers."""
+        """Return bone locks keyed by unified VG index (int), for Rust FFI callers.
+
+        Covers every bone in the unified mapping, defaulting to False (unlocked)
+        for any bone absent from the per-layer bone_locks metadata. A layer with
+        no bones ever explicitly locked has an empty bone_locks dict by design
+        (see LayerCompositor.get_bone_locks) -- Rust smooth/sharpen build their
+        "which bones to process" list by filtering this dict's own keys, so
+        returning only the explicitly-present entries silently excluded every
+        bone on any layer with an empty bone_locks dict, making smooth/sharpen
+        a no-op on such layers. See docs/bug-history/0021.
+        """
         name_locks = self._layer_mgr.get_bone_locks(
             self.storage.read_meta_list(), self.active_layer_index
         )
         bone_to_id, _ = self.storage.get_unified_mapping(self.obj)
-        return {bone_to_id[name]: locked
-                for name, locked in name_locks.items()
-                if name in bone_to_id}
+        return {vg_id: name_locks.get(name, False) for name, vg_id in bone_to_id.items()}

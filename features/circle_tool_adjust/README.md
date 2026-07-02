@@ -3,15 +3,18 @@
 ## Domain Identity
 - **Domain ID:** `circle_tool_adjust`
 - **Actions:** `adjust_radius_interactive`
+- **Tab:** `SKINNING`
 
 ## Architecture & Dataflow
-1. User triggers Alt+LMB inside EDIT_MESH mode.
-2. `SUPERSKIN_OT_circle_tool_adjust_radius` modal captures mouse movement delta.
-3. Delta is mapped to update `superskin_circle_tool_adjust_prefs.brush_radius_value` on the WindowManager.
-4. The `update` callback on `brush_radius_value` syncs the new value to Blender's native circle select tool.
+1. User triggers Alt+LMB inside EDIT_MESH mode (`keymap.py`).
+2. This invokes the `adjust_radius_interactive` action, which `CircleToolAdjustFeature.execute()` forwards to `bpy.ops.superskin.circle_tool_adjust_radius('INVOKE_DEFAULT')`.
+3. `SUPERSKIN_OT_circle_tool_adjust_radius` (`ops.py`) modal captures mouse movement delta and updates `superskin_circle_tool_adjust_prefs.brush_radius_value` on the WindowManager.
+4. The `update` callback (`_on_radius_updated`) on `brush_radius_value` syncs the new value to Blender's native `view3d.select_circle` tool properties (clamped 1–300).
+
+The N-panel slider in `draw_section()` also writes directly to `brush_radius_value`, triggering the same sync callback.
 
 ## File Manifest
-- `prefs.py`: Owns the WindowManager PropertyGroup and PrefsExtensionSpec registration.
-- `ops.py`: Implements the interactive modal operator tracking mouse movements.
+- `circle_tool_adjust_feature.py`: `CircleToolAdjustFeature(UnifiedFeatureExtension)` — owns the `SSPrefCircleToolAdjust` PropertyGroup (`brush_radius_value`, min 1 / max 300 / default 30), action dispatch (`adjust_radius_interactive` → invokes the modal operator), UI slider, and JSON persistence (`default_radius` key).
+- `ops.py`: `SUPERSKIN_OT_circle_tool_adjust_radius` (`superskin.circle_tool_adjust_radius`) — interactive modal operator tracking mouse movements.
 - `keymap.py`: Registers the Alt+LMB shortcut for the modal operator.
-- `circle_tool_adjust_domain.py`: DomainRegistry adapter binding domain ID and actions.
+- `default_config.json`: `default_radius` (30), `max_radius` (300), `min_radius` (1).

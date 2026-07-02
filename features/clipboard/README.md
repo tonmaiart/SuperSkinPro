@@ -16,7 +16,7 @@ Global application singleton managing the cut, copy, and paste pipeline for skin
 *Operators: `object.ssp_copy_weight`, `object.ssp_cut_weight`, `object.ssp_paste_weight_add`, `object.ssp_paste_weight_subtract`, `object.ssp_paste_weight_replace`.*
 
 ## 🗺️ Vertex-Count Resolution Matrix
-At paste execution, `resolve_paste_targets_*()` in `core/layer_manager/data_operations.py` evaluates targets against the active selection:
+At paste execution, `resolve_paste_targets_*()` in `core_subsystems/layer_compositor/data_operations.py` evaluates targets against the active selection:
 
 | Clipboard Verts (clip) | Target Selected Verts | Mesh Context | Result Behavior |
 |---|---|---|---|
@@ -34,4 +34,4 @@ Handles out-of-context data transfer gracefully behind the scenes:
 - **MASK Clipboard ➔ WEIGHT Context:** Stamps the mask intensity float directly onto the **Active Bone** slot within the destination layer.
 
 ## 🚨 Rules for Agents & Guard Order
-To minimize token consumption and avoid polluting the Blender undo stack with malformed steps, evaluate all validations and bone sets using `validate_bone_compatibility` up front. **Do NOT invoke `undo_manager.push()` until all structural checks pass 100%.** If any verification fails, raise a `ValueError` to terminate the loop cleanly.
+To minimize token consumption and avoid polluting the Blender undo stack with malformed steps, evaluate all validations and bone sets using `validate_bone_compatibility` up front before performing any mutation. If any verification fails, raise a `ValueError` to terminate the loop cleanly. Note: `undo_manager.push()`/`sync_checksum()` are no-op stubs under the native temp-vertex-group undo protocol (see project `CLAUDE.md`) — do not gate this logic on them.

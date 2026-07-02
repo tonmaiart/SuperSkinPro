@@ -44,10 +44,7 @@ exposing a new submodule.
 | `topology_cache_manager/` | `TopologyCacheManager` | VG-index mapping cache, mesh-neighbor topology, bone proximity ordering |
 | `context_selection_service/` | `ContextSelectionService` | Viewport selection, mask-context detection, undo-restore flag, weight normalisation |
 | `license_gateway/` | `LicenseGateway` | Gumroad license verification, Pro-tier feature gating |
-| `preferences/` | `PreferencesService` | Preference I/O and core `bpy.types.PropertyGroup` definitions |
-| `layer_manager/` | *(legacy)* | Retained pending migration to `LayerCompositor` |
-| `license/` | *(legacy)* | Retained pending migration to `LicenseGateway` |
-| `orphan_resolver/` | *(legacy)* | Orphan-bone selection operator |
+| `preferences/` | `PreferencesService` | *(legacy package, retained pending a separate migration pass)* Preference I/O and core `bpy.types.PropertyGroup` definitions |
 
 ---
 

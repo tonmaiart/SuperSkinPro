@@ -72,15 +72,24 @@ These methods route reads and writes through the correct data store for the curr
 
 After the `0016` undo redesign, the active layer's source of truth in Edit Mode is the `__ssp_*` BMesh temp VGs, not `ss_layer_N`. Calling the plain read/write methods in Edit Mode silently accesses the wrong store — the root cause of bugs `0018` and `0019`.
 
+**Apply-Weight in Edit Mode always splits into two sub-steps, counted as a single undo step:**
+1. **Update Temp VG** — the new weights are written into the `__ssp_*` BMesh deform layer. This is what Blender's native BMesh undo/redo actually tracks.
+2. **Flatten to Real VG** — all visible layers (including the just-updated temp VG) are composited and written into the real deformation Vertex Groups, so the Armature Modifier recalculates the viewport deform immediately.
+
+Both sub-steps happen inside the same Python call (`write_active_layer()` performs step 1, then calls `finish()` which performs step 2), so they land inside a single Blender operator execution and are therefore one atomic undo/redo step from the user's perspective — never two separate history entries.
+
+`ss_layer_N` (the permanent, Object-Mode storage) is **not** touched by either sub-step. It is only written on a deliberate Save Weight action or on exiting Edit Mode (the bake path in `_exit_edit_mode`). Until then, all in-progress Edit Mode weight changes exist only in the `__ssp_*` temp VGs.
+
 ### `read_active_layer() -> dict[int, dict[str, float]]`
 - **Description:** Reads the active layer from the correct source for the current mode. Edit Mode: `__ssp_*` BMesh temp VGs. Object Mode: `ss_layer_N`.
 - **Returns:** `{ v_idx (int): { bone_name (str): weight (float) } }`
 - **Side effect:** Caches the unified bone mapping on the instance for a paired `write_active_layer()` call (avoids a second VG scan).
 
 ### `write_active_layer(layer_str: dict, *, color_only: bool = True)`
-- **Description:** Writes a string-keyed layer dict to the correct target for the current mode, then calls `finish()`. Edit Mode: `__ssp_*` BMesh temp VGs. Object Mode: `ss_layer_N`. Also re-merges orphan entries and prunes zero-weight bones.
+- **Description:** Writes a string-keyed layer dict to the correct target for the current mode, then calls `finish()`. Edit Mode: writes to `__ssp_*` BMesh temp VGs (Update Temp VG), then `finish()` flattens all visible layers onto the real deform VGs (Flatten to Real VG) — see the two-sub-step note above. Object Mode: writes straight to `ss_layer_N`. Also re-merges orphan entries and prunes zero-weight bones.
 - **Input:** `{ v_idx (int): { bone_name (str): weight (float) } }`
 - **Requires:** `read_active_layer()` should have been called first on this instance so the bone mapping cache is populated.
+- **Mask note:** This method writes weight data only. It calls the internal write path with no mask payload (`None`) — it must never be passed an empty dict `{}` in place of "no mask data," since the underlying Edit-Mode writer treats `{}` as "the mask is now empty everywhere" and clears it. See `docs/bug-history/0020`.
 
 ### `get_unified_mapping() -> tuple[dict[str, int], dict[int, str]]`
 - **Description:** Returns `(bone_to_id, id_to_bone)` including synthetic IDs for orphan bones. Reuses the mapping cached by `read_active_layer()` if already called on this instance.
@@ -141,10 +150,10 @@ After the `0016` undo redesign, the active layer's source of truth in Edit Mode 
 ### `remove_vg_selected(obj, name: str) -> bool`
 - **Description:** Removes a bone name from the comma-separated global selection pool.
 
-### `normalize_weights(layer_dict: dict, bone_locks: dict[str, bool], active_vg_name: str, is_mask: bool) -> dict`
-- **Description:** Normalizes weights in a layer dict so that the sum of all unlocked bone weights at each vertex equals `1.0`. Locked bones are excluded from normalization. Pass `is_mask=True` to normalize a flat mask dict instead.
+### `normalize_weights(layer_dict: dict, vertex_index: int, active_vg_name: str) -> dict`
+- **Description:** Normalizes weights in a layer dict so that the sum of all unlocked bone weights at the given vertex equals `1.0`. Locked bones are excluded from normalization.
 - **Returns:** A new normalized dict in the same format as the input.
-- **Notes:** Implementation lives in `core_subsystems/weight_ops.py`.
+- **Notes:** Delegates to `core_subsystems/context_selection_service/`'s `ContextSelectionService.normalize_weights`.
 
 ### `switch_to_layer(index: int) -> None`
 - **Description:** Switches the active layer to the given slot index, performing any necessary mode transitions (Edit Mode temp-VG bake/restore).

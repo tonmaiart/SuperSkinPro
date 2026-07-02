@@ -1,6 +1,6 @@
 ---
 name: superskinpro-core-subsystem
-description: Use this skill for ANY task involving SuperSkinPro core_subsystems/ layer. Covers four modes: (1) CREATING — scaffolding a new subsystem package under core_subsystems/; (2) REFINING — improving or extending an existing subsystem's logic, gateway, or service class; (3) VERIFYING — pre-handoff correctness gate checking all 5 invariants; (4) EDITING — targeted changes to a specific file inside core_subsystems/. Trigger on any prompt mentioning "core subsystem", "new subsystem", "add subsystem", "create subsystem", "refine subsystem", "edit subsystem", "verify subsystem", "audit subsystem", "preferences subsystem", "license subsystem", "rust gateway", "FFI layer", or any request to read, write, or inspect files under core_subsystems/. Always trigger when the task names a specific file such as preferences_service.py, license_service.py, license_gateway.py, property_groups.py, rust_loader.py, flat_array_bridge.py, or bone_analyzer.py inside core_subsystems/.
+description: Use this skill for ANY task involving SuperSkinPro core_subsystems/ layer. Covers four modes: (1) CREATING — scaffolding a new subsystem package under core_subsystems/; (2) REFINING — improving or extending an existing subsystem's logic, gateway, or service class; (3) VERIFYING — pre-handoff correctness gate checking all 5 invariants; (4) EDITING — targeted changes to a specific file inside core_subsystems/. Trigger on any prompt mentioning "core subsystem", "new subsystem", "add subsystem", "create subsystem", "refine subsystem", "edit subsystem", "verify subsystem", "audit subsystem", "preferences subsystem", "license subsystem", "rust gateway", "FFI layer", or any request to read, write, or inspect files under core_subsystems/. Always trigger when the task names a specific file such as preferences_service.py, license_gateway.py, property_groups.py, rust_weight_engine.py, flat_array_bridge.py, or topology_cache_manager.py inside core_subsystems/.
 ---
 
 # SuperSkinPro — Core Subsystem Skill
@@ -13,6 +13,10 @@ Jump to the relevant mode below.
 - **[Mode C: Verify](#mode-c-verify)** — Pre-handoff correctness gate
 - **[Mode D: Edit](#mode-d-edit)** — Targeted single-file change
 ---
+
+Before opening any file, invoke `superskinpro-locate` for the reading
+discipline and to confirm which subsystem folder applies — it also lists
+`core_subsystems/README.md` as the always-read entry point for this layer.
 
 ## Layer Contract (Read Before Any Mode)
 
@@ -32,10 +36,12 @@ Rust binary        ← Called only via gateway files using flat arrays
 Only `core/` may import from `core_subsystems/`. `features/` importing here
 directly is a hard violation. All feature access must go through `CoreFacade`.
 
-**INV-2 — Zero Sibling Cross-Imports**
-Modules inside `core_subsystems/` must not import from each other horizontally.
-Every subsystem is a fully independent leaf node. If data must pass between
-subsystems, it is threaded through method arguments by the caller in `core/`.
+**INV-2 — One-Way Dependency Chains Only**
+Intra-subsystem imports between encapsulated packages are permitted only in
+strict one-way dependency chains — circular imports are forbidden. Prefer
+threading data through method arguments from the caller in `core/` over
+adding a new cross-subsystem import; only add a direct one-way import when
+that's clearly cleaner, and never introduce a cycle.
 
 **INV-3 — No `bpy.ops`, No `bpy.context` Mutation**
 Read-only access to `bpy.types` or primitive data is allowed. Calling
@@ -59,7 +65,7 @@ Two subsystems have pre-approved cross-layer access — do not flag these as vio
 | File | Approved Exception |
 |---|---|
 | `preferences/property_groups.py` | May lazy-import `ShaderManager` from core inside `update` callbacks to trigger viewport color refresh |
-| `license/license_service.py` | May access `PreferencesService` for License Key / Activation Token I/O (Preferences acts as generic file I/O, not a domain concern) |
+| `license_gateway/license_gateway.py` (`LicenseGateway`) | May access `PreferencesService` for License Key / Activation Token I/O (Preferences acts as generic file I/O, not a domain concern) |
 
 ---
 
@@ -141,6 +147,11 @@ Rules for service classes:
 - No `bpy.ops` calls, no `bpy.context` mutations.
 - No imports from sibling subsystem packages.
 
+**Real example to check the pattern against:** `context_selection_service/`
+— `__init__.py` reloads its one private module then exports exactly one
+public class, `ContextSelectionService`, via `__all__`. Use it as the
+reference shape when scaffolding a new subsystem.
+
 ### A3 — Write `my_subsystem_gateway.py` (Only if Rust FFI Needed)
 
 ```python
@@ -211,8 +222,10 @@ Extend or improve an existing subsystem. Read the target files first, then apply
 
 1. Read the target subsystem files to understand current structure.
 2. Identify which of the 5 invariants the planned change could affect.
-3. If adding a new method that might need data from another subsystem —
-   stop. Thread the data through the caller in `core/` instead (INV-2).
+3. If adding a new method that might need data from another subsystem,
+   prefer threading the data through the caller in `core/` (INV-2). A direct
+   one-way import from another subsystem is only acceptable if it doesn't
+   create a cycle — never add a new cross-import without checking this.
 
 ### B2 — Adding a New Method to a Service
 
@@ -235,7 +248,7 @@ Extend or improve an existing subsystem. Read the target files first, then apply
 - [ ] FFI boundary still uses `array.array` only
 - [ ] `__init__.py` reload loop updated if new files were added
 - [ ] Docstrings updated to reflect new behaviour
-- [ ] Approved exceptions (preferences lazy-import, license PreferencesService access) preserved if present
+- [ ] Approved exceptions (preferences lazy-import, license_gateway PreferencesService access) preserved if present
 
 ---
 
@@ -250,8 +263,9 @@ For each file in the subsystem, check:
 
 ```
 [INV-1] BLOCKER  — any import of core_subsystems/* from inside features/
-[INV-2] BLOCKER  — any cross-import between sibling subsystem packages
-                   (exception: preferences→ShaderManager, license→PreferencesService)
+[INV-2] BLOCKER  — any circular cross-import between sibling subsystem packages
+                   (exception: preferences→ShaderManager, license_gateway→PreferencesService;
+                   one-way, non-circular cross-imports are otherwise permitted)
 [INV-3] BLOCKER  — any call to bpy.ops.* or mutation of bpy.context
 [INV-4] BLOCKER  — any Python object (non-primitive) passed across FFI boundary
 [INV-5] WARNING  — emoji, non-English comment, or informal language in code

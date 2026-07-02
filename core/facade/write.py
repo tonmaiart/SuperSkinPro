@@ -156,7 +156,7 @@ class WriteFacadeMixin:
             v_idx: {self._bone_to_id[b]: w for b, w in weights.items() if b in self._bone_to_id}
             for v_idx, weights in layer_str.items()
         }
-        self._write_active_layer_string(result_int, self._id_to_bone, {}, is_mask_mode=False)
+        self._write_active_layer_string(result_int, self._id_to_bone, None, is_mask_mode=False)
         self.finish(color_only=color_only)
 
     def _write_active_layer_string(self, layer_int: dict, id_to_bone: dict,

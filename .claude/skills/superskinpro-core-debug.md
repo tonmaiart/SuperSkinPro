@@ -8,27 +8,31 @@ description: Use this skill when debugging, auditing, or understanding any bug o
 This skill governs how to read, diagnose, and reason about bugs in
 `core/` and `core_subsystems/`. The central discipline: **read minimum
 files, stay focused, escalate to subsystems only when necessary.**
+
+For anything outside the fixed reading order below (e.g. a specific
+`features/` file, or a folder not covered by the Subsystem Deep-Dives),
+invoke `superskinpro-locate` first rather than exploring ad hoc.
  
 ---
  
 ## Reading Protocol (Strict)
  
 ### Layer 1 — Always read first
-Start every debug session with exactly these two files. They are the
-navigation map — read them before touching any source file.
+Start every debug session with these two references. There is no separate
+external "debug guide" file — the symptom → subsystem map lives inline in
+this skill (Layer 2 table below + Subsystem Deep-Dives section).
  
-| File | Purpose |
+| Reference | Purpose |
 |---|---|
-| `docs/core-interfaces/core_debug_guide.md` | Symptom → subsystem map. Use it to identify which subsystem is relevant before opening any source. |
-| `docs/bug-history/README.md` (if present) | Check whether this symptom has been seen before. |
+| Layer 2 table below (this file) | Symptom → subsystem map. Use it to identify which subsystem is relevant before opening any source. |
+| `docs/bug-history/README.md` | Check whether this symptom has been seen before. |
  
 ### Layer 2 — Subsystem-targeted reads
-Use the subsystem map in `core_debug_guide.md` to identify the minimum
-set of files to read. **Read only those files.** Do not open unrelated
-core modules.
+Use the symptom table below to identify the minimum set of files to read.
+**Read only those files.** Do not open unrelated core modules.
  
 ```
-Symptom → core_debug_guide.md → relevant subsystem files ONLY
+Symptom → symptom table below → relevant subsystem files ONLY
 ```
  
 The six subsystems and their trigger symptoms:
@@ -52,23 +56,23 @@ Only open a `core_subsystems/` file when:
   bug behavior is in that import
 **What each subsystem covers (for targeted escalation):**
  
-| Module | What it owns |
+| Package / file | What it owns |
 |---|---|
-| `rust_loader.py` | Binary loading, `RustGateway`, `RustUnavailableError` |
-| `flat_array_bridge.py` | CSR/flat array FFI conversion (`layer_to_csr`, `mask_to_flat`, `extract_deformed_coords`) |
-| `bone_analyzer.py` | Rust-accelerated bone display-order computation |
-| `preferences/` | `PreferencesService`, ramp stops, palette, license — escalate only if prefs-related data is the bug source |
-| `license/` | Gumroad verification, Pro-tier gating — escalate only for license/activation bugs |
+| `rust_weight_engine/rust_weight_engine.py` | Binary loading, dispatch, `RustWeightEngine`, `RustUnavailableError` |
+| `rust_weight_engine/flat_array_bridge.py` | CSR/flat array FFI conversion |
+| `rust_weight_engine/data_bridge.py` | Int/string-keyed layer dict conversion for FFI |
+| `layer_compositor/layer_compositor.py` + `codec.py` | Layer metadata CRUD, compositing entry point, encode/decode |
+| `topology_cache_manager/` (`topology_cache_manager.py`, `proximity_analyzer.py`) | VG-index mapping cache, mesh-neighbor topology, bone proximity/display-order |
+| `context_selection_service/` | Viewport selection, mask-context detection, `normalize_weights` |
+| `license_gateway/license_gateway.py` | `LicenseGateway` — Gumroad verification, Pro-tier gating — escalate only for license/activation bugs |
+| `preferences/` (legacy, retained pending migration) | `PreferencesService`, ramp stops, palette — escalate only if prefs-related data is the bug source |
  
 If you escalate to `core_subsystems/`, read only the one relevant file,
 not the entire package.
  
 ### What never to read (unless explicitly requested)
-- `features/*` — feature domains are out of scope for core debugging
-- `ui/*` — UI panels are out of scope unless the bug is a draw callback
-  clearly registered from a UI file
-- `operators/*` — operator shells are out of scope unless the traceback
-  clearly starts there
+- `features/*` — feature domains are out of scope for core debugging (use `superskinpro-domain` instead)
+- `interface/*` — N-panel widgets/registry are out of scope unless the bug is a draw callback clearly registered from an `interface/` file. Note: there is no top-level `ui/` or `operators/` package anymore — panel/widget code lives in `interface/`, and operator shells live per-domain in `features/<domain>/ops.py`.
 ---
  
 ## Core Architecture Quick Reference
@@ -76,23 +80,32 @@ not the entire package.
 ```
 Blender Operator
     ↓
-UIController (core/ui_controller/ui_controller.py)
-    ↓ delegates to sub-modules
-    ├── pipeline.py        — finish(), flatten, save/restore state
-    ├── operations.py      — mirror macro
-    └── layer_crud.py      — CRUD, bone locks, layer switch
+CoreFacade (core/facade/__init__.py)
+    — CoreFacade IS the sole ctrl type; UIController no longer exists as a
+      separate class. get_ctrl() just `return self`.
+    ├── ReadFacadeMixin (read.py)       — active layer dict, masks, vg state
+    ├── WriteFacadeMixin (write.py)     — write_layer_dict, write_mask_dict, finish()
+    └── VisualizerFacadeMixin (visualizer.py) — invalidate, toast notifications
+    ↓ delegates to private ui_controller/ sub-modules (never imported outside core/)
+    ├── pipeline.py        — finish(), flatten_to_mesh_edit(), save/restore state
+    ├── layer_crud.py      — CRUD, bone locks, layer switch, active bone
+    ├── operations.py      — mirror macro, normalize_weights bridge
+    └── undo_manager.py    — undo/redo orchestration
     ↓
 LayerStorageService (core/layer_storage/storage_service.py)
     — single authority for ss_layer_N, ss_mask_N, ss_layers_meta
     ↓
-LayerManager (core/layer_manager/layer_manager.py)
-    — pure-data meta list operations (no bpy)
+LayerCompositor (core_subsystems/layer_compositor/layer_compositor.py)
+    — pure-data metadata CRUD + composite pipeline entry point
     ↓
-Compositor (core/layer_manager/compositor.py)
-    — encode/decode, composite_layers → Rust FFI
+codec._composite_layers() (core_subsystems/layer_compositor/codec.py)
+    — decode, coerce int keys, dispatch to Rust FFI
+    ↓
+RustWeightEngine (core_subsystems/rust_weight_engine/)
+    — rust_composite_layers FFI call, top-down alpha blend
     ↓
 ShaderManager (core/shaders/shader_manager.py)
-    — GPU visualizer state, draw handles, invalidation
+    — GPU redraw invalidation, HUD toast, deform-generation bump
 ```
  
 **Key invariants to check during debugging:**
@@ -105,6 +118,7 @@ INVARIANT: ss_layers_meta is always written back after mutating a meta dict
 INVARIANT: @bpy.app.handlers.persistent is MANDATORY innermost decorator on handlers
 INVARIANT: active bone → superskin_storage.last_clicked_index (NOT vertex_groups.active_index)
 INVARIANT: undo_manager.push() / sync_checksum() are no-op stubs — never call in new code
+INVARIANT: core/preferences/ is a thin stub; the real PreferencesService lives in core_subsystems/preferences/ (legacy-flagged but still authoritative)
 ```
  
 ---
@@ -129,8 +143,8 @@ Native `VertexGroup.lock_weight` is NOT authoritative — it is a UI mirror only
 **Source of truth:** `mesh["ss_layers_meta"]` (JSON string)  
 Fields per layer: `name`, `index`, `visible`, `bone_locks`, `mask_default`, `bone_selection`, `active_bone`
  
-**Write rule:** `LayerManager` methods return a **new list** — they do NOT write.
-The caller MUST call `ctrl.storage.write_meta_list(meta)` afterward.
+**Write rule:** `LayerCompositor` metadata methods return a **new list** — they
+do NOT write. The caller MUST call `ctrl.storage.write_meta_list(meta)` afterward.
  
 **Restore path:** `pipeline.restore_layer_state()` syncs metadata → `superskin_bones_collection`
 on every layer switch. If UI state is stale after a switch, check this function.
@@ -143,7 +157,12 @@ on every layer switch. If UI state is stale after a switch, check this function.
 ```
 storage.harvest_layer_data_map()  +  harvest_mask_data_map()
     ↓
-compositor.composite_layers()  →  Rust FFI (rust_composite_layers)
+LayerCompositor.composite_layers()  (core_subsystems/layer_compositor/layer_compositor.py)
+    ↓
+codec._composite_layers()  (core_subsystems/layer_compositor/codec.py)
+    — decodes stored blobs, coerces int keys, dispatches to Rust FFI
+    ↓
+RustWeightEngine.call("rust_composite_layers", ...)
     ↓
 flatten.flatten_visible_layers_to_mesh()  →  writes VertexGroup weights
     ↓
@@ -228,13 +247,13 @@ Fix: check `if not cls._bone_color_map` (truthy check), not `if cls._bone_color_
 ## Diagnosis Workflow
  
 ```
-1. Read core_debug_guide.md → identify which subsystem
-2. Check docs/bug-history/ → has this exact symptom appeared before?
+1. Use the Layer 2 symptom table above → identify which subsystem
+2. Check docs/bug-history/README.md → has this exact symptom appeared before?
 3. Read ONLY the listed subsystem files
 4. Check relevant INVARIANT (list above)
 5. If traceback goes into core_subsystems/ → escalate only that one file
 6. Propose fix → state which file and which line changes
-7. Do NOT open feature or UI files unless the traceback clearly starts there
+7. Do NOT open feature or interface files unless the traceback clearly starts there
 ```
  
 ---
@@ -266,7 +285,7 @@ Is the issue clearly in a feature domain (features/)?
   YES → switch to superskinpro-domain skill
   NO  → stay here
  
-Is the issue in a UI panel (ui/)?
-  YES → read only if draw callback is clearly registered from ui/
-  NO  → do not open ui/ files
+Is the issue in an N-panel widget (interface/)?
+  YES → read only if draw callback is clearly registered from interface/
+  NO  → do not open interface/ files
 ```

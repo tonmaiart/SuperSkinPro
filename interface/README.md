@@ -21,9 +21,7 @@ interface/
 ├── registry/                  # Registration API
 │   ├── __init__.py
 │   ├── register_api.py        # Canonical UnifiedFeatureExtension + UnifiedRegistry
-│   ├── base_domain.py         # Legacy abstract base class
-│   ├── domain_registry.py     # Legacy action registry
-│   └── prefs_extension_registry.py # Legacy preference registry
+│   └── prefs_extension_registry.py # Legacy preference registry (still defined but no longer consumed at runtime)
 │
 ├── template_ui/               # UI Components & Mixins
 │   ├── __init__.py

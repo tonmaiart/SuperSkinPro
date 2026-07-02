@@ -27,3 +27,5 @@ Manages the interactive bone selection tool (Modal Operator Alt+2) and the persi
   "fill_opacity":         0.25,
   "head_circle_size":     0.55
 }
+```
+Note: `SSPrefBonePicker.tail_circle_size` (default `0.36`) is a registered PropertyGroup field not currently present in `default_config.json`.
