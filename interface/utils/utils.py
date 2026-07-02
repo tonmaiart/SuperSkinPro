@@ -17,6 +17,7 @@ from ...core_subsystems.topology_cache_manager import TopologyCacheManager
 from ...core.layer_storage.storage_service import LayerStorageService
 from ...core_subsystems.rust_weight_engine import RustWeightEngine
 from ...core.bone_identity import BoneIdentityService
+from ...core_subsystems.debug_logging import DebugLogService
 # LayerCompositor kept function-scoped in sync_bones_to_ui_collection —
 # hoisting it triggers a circular import through core_subsystems → features → ui.utils.
 
@@ -49,10 +50,6 @@ def exit_mask_mode_if_active(context, obj):
     restores the visualizer, and returns to the previous mode.
 
     Only triggers when ``superskin_is_mask_mode`` is explicitly True.
-    Being in the Layers tab alone is NOT sufficient — ordinary layer
-    browsing does not constitute "mask-editing context" that needs
-    tearing down, and the visualizer is already handled by
-    ``on_skin_sub_tabs_update`` when the sub-tab actually changes.
 
     Suppresses the auto-close-panel-on-mode-exit side effect for the
     duration of the round-trip so callers that are *not* already wrapped
@@ -218,21 +215,52 @@ def _get_cached_display_order(arm_obj, deform_bones):
 def _get_visible_influence_bones(context, data):
     """⚡ Pure deterministic weight scanner cache. Stable during selection changes.
 
+    In Edit Mode with temp VGs loaded, the active layer's live weights sit
+    in the __ssp_* BMesh channels and haven't been baked back to ss_layer_N
+    yet (see docs on the 0016 undo redesign) — reading ss_layer_N here would
+    silently show stale/empty data while painting. Mirrors the same
+    mode-aware routing as core/facade/read.py's _read_active_layer_int().
+
+    The ss_layer_N blob hash used to key the cache in Object Mode doesn't
+    move at all during an Edit-Mode paint stroke (nothing is baked back
+    until layer switch/mode exit), so it can't be reused as-is here. Instead
+    this branch keys on ShaderManager.get_deform_generation() — the same
+    process-wide counter core/facade/write.py's finish() and
+    write_active_layer_from_calc() already bump on every completed weight
+    write, and only on that (not on mouse-move/redraw) — so draw() calls
+    between strokes still hit the cache instead of re-running the Rust
+    scanner on every redraw tick.
+
     Hoisted imports: LayerStorageService, RustWeightEngine (were function-scoped,
     absolute 'SuperSkinPro' references at lines 221-222).
     """
     global _influence_visible_cache, _influence_visible_cache_key
 
+    from ...core.layer_storage.temp_vg_bridge import has_temp_vgs, read_temp_vgs_from_bm
+    from ...core.shaders.shader_manager import ShaderManager
+
     mesh_data = data.data
-    active_layer_idx = mesh_data.get("ss_active_layer", 0)
-    raw_blob = mesh_data.get(f"ss_layer_{active_layer_idx}", "")
-    cache_key = (id(mesh_data), active_layer_idx, hash(raw_blob))
+    in_edit_temp = data.mode == 'EDIT' and has_temp_vgs(data)
+
+    if in_edit_temp:
+        cache_key = (id(mesh_data), 'EDIT_TEMP', ShaderManager.get_deform_generation())
+    else:
+        active_layer_idx = mesh_data.get("ss_active_layer", 0)
+        raw_blob = mesh_data.get(f"ss_layer_{active_layer_idx}", "")
+        cache_key = (id(mesh_data), active_layer_idx, hash(raw_blob))
 
     if _influence_visible_cache_key == cache_key:
         return set(_influence_visible_cache)
 
     storage = LayerStorageService(mesh_data)
-    raw_layer_dict = storage.read_active_layer_dict()
+
+    if in_edit_temp:
+        import bmesh as _bm_mod
+        bm = _bm_mod.from_edit_mesh(mesh_data)
+        raw_layer_dict, _, _ = read_temp_vgs_from_bm(bm, data)
+    else:
+        raw_layer_dict = storage.read_active_layer_dict()
+
     bone_to_id, id_to_bone = storage.get_local_mapping(data)
 
     layer_int: dict[int, dict[int, float]] = {}
@@ -255,6 +283,14 @@ def _get_visible_influence_bones(context, data):
             b_name = id_to_bone.get(b_id)
             if b_name:
                 visible_bones.add(b_name)
+
+    DebugLogService.log(
+        "core_pipeline",
+        f"_get_visible_influence_bones() recompute: obj={data.name!r} "
+        f"in_edit_temp={in_edit_temp} raw_layer_dict verts={len(raw_layer_dict)} "
+        f"rust_set={rust_set!r} visible_bones={sorted(visible_bones)!r} "
+        f"obj.mode={getattr(data, 'mode', '?')}",
+    )
 
     _influence_visible_cache = frozenset(visible_bones)
     _influence_visible_cache_key = cache_key
@@ -321,6 +357,8 @@ def sync_bones_to_ui_collection(obj):
     if not obj or obj.type != 'MESH':
         return
 
+    DebugLogService.log("bone_id", f"sync_bones_to_ui_collection() ENTRY: obj={obj.name!r}")
+
     order = _get_display_order_impl(None, obj)
     vg_list = obj.vertex_groups
     orphans = BoneIdentityService.get_scan_for_object(obj)
@@ -335,7 +373,8 @@ def sync_bones_to_ui_collection(obj):
     storage = obj.superskin_storage
     active_orphan = storage.active_orphan_name
     active_vg_name = None
-    if not active_orphan and 0 <= storage.last_clicked_index < len(vg_list):
+    if (not active_orphan and not storage.active_is_mask
+            and 0 <= storage.last_clicked_index < len(vg_list)):
         active_vg_name = vg_list[storage.last_clicked_index].name
 
     try:
@@ -348,6 +387,20 @@ def sync_bones_to_ui_collection(obj):
 
     col = obj.superskin_bones_collection
     col.clear()
+
+    mask_item = col.add()
+    mask_item.name = "Mask"
+    mask_item.vg_index = -1
+    mask_item.is_orphan = False
+    mask_item.is_mask = True
+    if storage.active_is_mask:
+        obj.superskin_bones_idx = len(col) - 1
+
+    DebugLogService.log(
+        "bone_id",
+        f"sync_bones_to_ui_collection(): mask row added at col index 0, "
+        f"is_mask={mask_item.is_mask} active_is_mask={storage.active_is_mask}",
+    )
 
     for vg_idx in order:
         if vg_idx < 0 or vg_idx >= len(vg_list):
@@ -371,6 +424,13 @@ def sync_bones_to_ui_collection(obj):
         item.suggested_target = orphan.get("suggested_target") or ""
         if active_orphan and orphan["name"] == active_orphan:
             obj.superskin_bones_idx = len(col) - 1
+
+    DebugLogService.log(
+        "bone_id",
+        f"sync_bones_to_ui_collection() EXIT: {len(col)} total rows "
+        f"({len(order)} bone, {len(orphans)} orphan, 1 mask), "
+        f"superskin_bones_idx={obj.superskin_bones_idx}",
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -423,14 +483,14 @@ def _select_only_layer(obj, slot_index: int):
 def _enforce_visualizer_from_tab_state(context):
     """Re-apply the correct viewport shader after a layer mutation.
 
-    Reads ``superskin_skin_sub_tabs`` directly:
-      LAYERS → force MASK visualizer
-      BONES  → restore the mode that was active before MASK (SINGLE/MULTI)
+    Reads ``superskin_is_mask_mode`` directly:
+      Mask row active → force MASK visualizer
+      otherwise        → restore the mode that was active before MASK (SINGLE/MULTI)
     """
     try:
         ctrl = CoreFacade(context).get_ctrl()
-        sub_tab = getattr(context.scene, "superskin_skin_sub_tabs", False)
-        if sub_tab:
+        is_mask = getattr(context.scene, "superskin_is_mask_mode", False)
+        if is_mask:
             ctrl.set_visualizer_mode('MASK')
         else:
             ctrl.restore_visualizer_from_mask()
@@ -491,8 +551,12 @@ def _superskin_layers_depsgraph_handler(scene, depsgraph):
                     # on, and reuses this handler rather than adding a
                     # second depsgraph subscriber for the same update loop.
                     sync_bones_to_ui_collection(obj)
-            except Exception:
-                pass
+            except Exception as e:
+                DebugLogService.log(
+                    "bone_id",
+                    f"_superskin_layers_depsgraph_handler() EXCEPTION on "
+                    f"obj={getattr(obj, 'name', '?')!r}: {e!r}\n{traceback.format_exc()}",
+                )
 
 
 @bpy.app.handlers.persistent
@@ -502,8 +566,12 @@ def _superskin_layers_load_handler(dummy):
             try:
                 sync_layers_to_ui_collection(obj)
                 sync_bones_to_ui_collection(obj)
-            except Exception:
-                pass
+            except Exception as e:
+                DebugLogService.log(
+                    "bone_id",
+                    f"_superskin_layers_load_handler() EXCEPTION on "
+                    f"obj={obj.name!r}: {e!r}\n{traceback.format_exc()}",
+                )
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Registration

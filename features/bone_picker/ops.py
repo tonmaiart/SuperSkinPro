@@ -50,8 +50,6 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
             return False
         if getattr(context.scene, "superskin_is_mask_mode", False):
             return False
-        if getattr(context.scene, "superskin_skin_sub_tabs", False):
-            return False
         return True
 
     bone_detect_dist: bpy.props.IntProperty(

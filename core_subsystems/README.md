@@ -44,6 +44,7 @@ exposing a new submodule.
 | `topology_cache_manager/` | `TopologyCacheManager` | VG-index mapping cache, mesh-neighbor topology, bone proximity ordering |
 | `context_selection_service/` | `ContextSelectionService` | Viewport selection, mask-context detection, undo-restore flag, weight normalisation |
 | `license_gateway/` | `LicenseGateway` | Gumroad license verification, Pro-tier feature gating |
+| `debug_logging/` | `DebugLogService` | Toggleable, category-gated debug console output (see `.claude/skills/superskinpro-debug-log.md` for usage; nests `SSPrefDebug` into `preferences`' `SSPrefRoot.debug`, its one sanctioned cross-subsystem exception) |
 | `preferences/` | `PreferencesService` | *(legacy package, retained pending a separate migration pass)* Preference I/O and core `bpy.types.PropertyGroup` definitions |
 
 ---

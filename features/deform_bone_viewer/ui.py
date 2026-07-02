@@ -28,14 +28,19 @@ from ...interface.utils.utils import _get_visible_influence_bones
 # ==============================================================================
 
 def _extra_keep_predicate_impl(context, data, item, original_idx):
-    """Draw-time row filter for the unified (real + orphan) mirror list."""
+    """Draw-time row filter for the unified (real + orphan + mask) mirror list."""
     adv = context.scene.superskin_adv_settings
     mode = adv.bone_list_filter_mode
 
+    if getattr(item, 'is_mask', False):
+        return mode != 'ORPHAN'
+
     if getattr(item, 'is_orphan', False):
-        return True
+        return mode != 'MASK'
 
     if mode == 'ORPHAN':
+        return False
+    elif mode == 'MASK':
         return False
     elif mode == 'INFLUENCE':
         influenced_bones = _get_visible_influence_bones(context, data)
@@ -50,9 +55,9 @@ def _extra_keep_predicate_impl(context, data, item, original_idx):
 class _BoneListVisibilityHooks(SuperSkinListMixin):
     """Plain-Python twin of MESH_UL_influence_list_view's hooks, used only
     by BoneListAdapter.get_keys_in_visual_order() for off-draw-cycle
-    visibility computation. Orphan rows are excluded here (unlike the real
-    UIList's own predicate), since they must never enter a range-select span
-    between two real bone rows."""
+    visibility computation. Orphan and mask rows are excluded here (unlike
+    the real UIList's own predicate), since they must never enter a
+    range-select span between two real bone rows."""
 
     def get_item_key(self, item):
         return item.name
@@ -63,6 +68,8 @@ class _BoneListVisibilityHooks(SuperSkinListMixin):
 
     def extra_keep_predicate(self, context, data, item, original_idx):
         if getattr(item, 'is_orphan', False):
+            return False
+        if getattr(item, 'is_mask', False):
             return False
         return _extra_keep_predicate_impl(context, data, item, original_idx)
 
@@ -143,6 +150,7 @@ class BoneListAdapter(ListSelectionAdapter):
         to the active layer via CoreFacade, and sets the active bone name.
         """
         obj.superskin_storage.active_orphan_name = ""
+        obj.superskin_storage.active_is_mask = False
 
         from ...interface.utils.utils import exit_mask_mode_if_active
         exit_mask_mode_if_active(context, obj)
@@ -218,7 +226,62 @@ def _sync_bones_idx_to_real_bone(obj, vg_index: int):
     """Point ``obj.superskin_bones_idx`` at the real-bone row that was just
     clicked. Drives only the blue row-highlight in the UIList."""
     for i, item in enumerate(obj.superskin_bones_collection):
-        if not item.is_orphan and item.vg_index == vg_index:
+        if not item.is_orphan and not item.is_mask and item.vg_index == vg_index:
+            obj.superskin_bones_idx = i
+            return
+
+
+# ==============================================================================
+# Mask Row-Click Operator
+# ==============================================================================
+
+class SUPERSKIN_OT_select_mask_row(bpy.types.Operator):
+    """Select the virtual Mask row in the Deform Bones list.
+
+    Single-select only — the mask row never joins the multi-select pool,
+    mirroring how ``superskin.select_orphan_bone_row`` (core/bone_identity)
+    handles orphan rows.
+    """
+
+    bl_idname = "superskin.select_mask_row"
+    bl_label = "Select Layer Mask Row"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj or obj.type != 'MESH':
+            return {'CANCELLED'}
+
+        from ...core.facade import CoreFacade
+        CoreFacade.debug_log("bone_id", f"select_mask_row.execute() ENTRY: obj={obj.name!r}")
+
+        storage = obj.superskin_storage
+        storage.active_orphan_name = ""
+        storage.last_clicked_index = -1
+        storage.active_is_mask = True
+        _sync_bones_idx_to_mask(obj)
+
+        try:
+            CoreFacade(context).get_ctrl().apply_active_bone()
+        except Exception:
+            traceback.print_exc()
+
+        CoreFacade.debug_log(
+            "bone_id",
+            f"select_mask_row.execute() EXIT: active_is_mask={storage.active_is_mask} "
+            f"superskin_bones_idx={obj.superskin_bones_idx} "
+            f"superskin_is_mask_mode={getattr(context.scene, 'superskin_is_mask_mode', None)}",
+        )
+
+        context.area.tag_redraw()
+        return {'FINISHED'}
+
+
+def _sync_bones_idx_to_mask(obj):
+    """Point ``obj.superskin_bones_idx`` at the mask row in the mirror
+    collection. Drives only the blue row-highlight in the UIList."""
+    for i, item in enumerate(obj.superskin_bones_collection):
+        if item.is_mask:
             obj.superskin_bones_idx = i
             return
 
@@ -243,17 +306,23 @@ class MESH_UL_influence_list_view(SuperSkinListMixin, bpy.types.UIList):
         return f",{key}," in data.superskin_storage.selected_names
 
     def draw_main_icon(self, context, data, item) -> str:
+        if item.is_mask:
+            return 'MOD_MASK'
         if item.is_orphan:
             return 'ERROR'
         influenced_set = _get_visible_influence_bones(context, data)
         return 'BONE_DATA' if item.name in influenced_set else 'BLANK1'
 
     def get_row_operator_id(self, item=None) -> str:
+        if item is not None and item.is_mask:
+            return "superskin.select_mask_row"
         if item is not None and item.is_orphan:
             return "superskin.select_orphan_bone_row"
         return "superskin.select_vertex_group_row"
 
     def set_row_operator_props(self, op, item):
+        if item.is_mask:
+            return
         if item.is_orphan:
             op.orphan_name = item.name
         else:
@@ -267,6 +336,8 @@ class MESH_UL_influence_list_view(SuperSkinListMixin, bpy.types.UIList):
         return _extra_keep_predicate_impl(context, data, item, original_idx)
 
     def draw_extra_icon(self, context, layout, data, item, index: int):
+        if item.is_mask:
+            return
         lock_icon = 'LOCKED' if item.lock_weight else 'UNLOCKED'
         op_lock = layout.operator(
             "superskin.toggle_vg_lock", text="", icon=lock_icon, emboss=False,
@@ -295,14 +366,76 @@ class SUPERSKIN_MT_bone_extra_overflow(bpy.types.Menu):
 # Draw function (called by prefs.py draw_section_fn)
 # ==============================================================================
 
+# Guards a one-shot bpy.app.timers callback, mirroring
+# interface/utils/utils.py::_auto_init_pending / _auto_init_layers. The
+# bones mirror collection (obj.superskin_bones_collection) is normally
+# rebuilt by the depsgraph_update_post handler, but that only fires on an
+# actual ID-data mutation — never on pure selection/draw. If a layer system
+# already exists but the mirror collection hasn't picked up the Mask row
+# yet (e.g. right after an addon reload, before any operator has run),
+# nothing would ever trigger a rebuild on its own. Detecting that here and
+# deferring the actual sync to a timer keeps the write outside draw(),
+# per sync_bones_to_ui_collection()'s "never call from draw()" contract.
+_bones_resync_pending = False
+
+
+def _force_bones_resync():
+    global _bones_resync_pending
+    _bones_resync_pending = False
+    try:
+        obj = bpy.context.active_object
+        if obj and obj.type == 'MESH' and "ss_layers_meta" in obj.data:
+            from ...interface.utils.utils import sync_bones_to_ui_collection
+            sync_bones_to_ui_collection(obj)
+            for window in bpy.context.window_manager.windows:
+                for area in window.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        area.tag_redraw()
+    except Exception:
+        pass
+    return None
+
+
+_last_draw_log_state = None
+
+
 def draw_influence_list_system(layout, context, rows=8):
     """Draw the Deform Bones list with search box and side buttons."""
     obj = context.active_object
     if not obj or obj.type != 'MESH' or not hasattr(obj, "superskin_storage"):
         return
 
+    from ...core.facade import CoreFacade
+    col = obj.superskin_bones_collection
+    mask_rows = [i.name for i in col if getattr(i, 'is_mask', False)]
+
+    # draw() runs on every UI redraw (mouse move, etc.) — only log when the
+    # observed state actually changes, not on every single call.
+    global _last_draw_log_state
+    log_state = (obj.name, len(col), tuple(mask_rows),
+                 context.scene.superskin_adv_settings.bone_list_filter_mode)
+    if log_state != _last_draw_log_state:
+        _last_draw_log_state = log_state
+        CoreFacade.debug_log(
+            "bone_id",
+            f"draw_influence_list_system(): obj={obj.name!r} "
+            f"superskin_bones_collection has {len(col)} rows, "
+            f"mask_rows={mask_rows!r}, "
+            f"filter_mode={context.scene.superskin_adv_settings.bone_list_filter_mode!r}",
+        )
+
+    global _bones_resync_pending
+    if ("ss_layers_meta" in obj.data and not mask_rows
+            and not _bones_resync_pending):
+        _bones_resync_pending = True
+        CoreFacade.debug_log(
+            "bone_id",
+            f"draw_influence_list_system(): scheduling _force_bones_resync() "
+            f"timer for obj={obj.name!r} (mirror collection missing Mask row)",
+        )
+        bpy.app.timers.register(_force_bones_resync, first_interval=0.0)
+
     adv = context.scene.superskin_adv_settings
-    scene = context.scene
 
     draw_list_with_sidebar(
         layout, context,
@@ -315,11 +448,10 @@ def draw_influence_list_system(layout, context, rows=8):
         search_prop="filter_name",
         rows=rows,
         button_defs=[
-            ("toggle", scene, "superskin_skin_sub_tabs", 'MOD_MASK'),
-            ("separator", 1.0),
             ("enum_radio", adv, "bone_list_filter_mode", 'NONE', 'LONGDISPLAY'),
             ("enum_radio", adv, "bone_list_filter_mode", 'INFLUENCE', 'BONE_DATA'),
             ("enum_radio", adv, "bone_list_filter_mode", 'ORPHAN', 'ERROR'),
+            ("enum_radio", adv, "bone_list_filter_mode", 'MASK', 'MOD_MASK'),
             ("separator", 1.0),
             ("operator", "object.mw_select_affect_vertices",
              'OUTLINER_DATA_POINTCLOUD', "", {}),
@@ -338,6 +470,7 @@ def draw_influence_list_system(layout, context, rows=8):
 def register():
     register_adapter('BONES', BoneListAdapter())
     bpy.utils.register_class(SUPERSKIN_OT_select_vertex_group_row)
+    bpy.utils.register_class(SUPERSKIN_OT_select_mask_row)
     bpy.utils.register_class(MESH_UL_influence_list_view)
     bpy.utils.register_class(SUPERSKIN_MT_bone_extra_overflow)
 
@@ -345,4 +478,5 @@ def register():
 def unregister():
     bpy.utils.unregister_class(SUPERSKIN_MT_bone_extra_overflow)
     bpy.utils.unregister_class(MESH_UL_influence_list_view)
+    bpy.utils.unregister_class(SUPERSKIN_OT_select_mask_row)
     bpy.utils.unregister_class(SUPERSKIN_OT_select_vertex_group_row)

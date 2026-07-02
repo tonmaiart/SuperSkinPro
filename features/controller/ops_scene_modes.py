@@ -207,10 +207,9 @@ def _enter_edit_mode(op, context):
 
     _save_and_set_gray()
 
-    # Auto-enable the custom weight visualizer (tab-aware)
+    # Auto-enable the custom weight visualizer (mask-row-aware)
     is_mask = getattr(context.scene, "superskin_is_mask_mode", False)
-    in_layers_tab = getattr(context.scene, "superskin_skin_sub_tabs", False)
-    viz_mode = 'MASK' if (is_mask or in_layers_tab) else 'SINGLE'
+    viz_mode = 'MASK' if is_mask else 'SINGLE'
     try:
         CoreFacade(context).get_ctrl().set_visualizer_mode(viz_mode)
     except Exception:

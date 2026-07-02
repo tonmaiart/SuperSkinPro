@@ -7,6 +7,7 @@ Pure conversion helpers live in core_subsystems/layer_pipeline.py.
 import json
 import bmesh
 from ...core_subsystems.layer_compositor import LayerCompositor
+from ...core_subsystems.context_selection_service import ContextSelectionService
 
 
 def finish(ctrl, *, color_only: bool = False):
@@ -186,6 +187,8 @@ def restore_layer_state(ctrl):
     if sel and hasattr(ctrl.obj, "superskin_storage"):
         ctrl.obj.superskin_storage.selected_names = sel
 
+    ctrl.obj.superskin_storage.active_is_mask = False
+
     name = ctrl._layer_mgr.get_active_bone_name(meta, idx)
     if name and name in ctrl.obj.vertex_groups:
         ctrl.obj.superskin_storage.last_clicked_index = ctrl.obj.vertex_groups[name].index
@@ -193,12 +196,7 @@ def restore_layer_state(ctrl):
 
 def is_mask_context(ctrl) -> bool:
     try:
-        scene = ctrl.ctx.scene
-        if getattr(scene, "superskin_is_mask_mode", False):
-            return True
-        if getattr(scene, "superskin_skin_sub_tabs", False):
-            return True
-        return False
+        return ContextSelectionService.is_mask_context(ctrl.ctx.scene)
     except Exception:
         return False
 

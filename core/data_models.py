@@ -6,9 +6,6 @@ folds them into panels.
 """
 import bpy
 
-# Converted from absolute 'SuperSkinPro.core.prop_callbacks' to relative import.
-from .prop_callbacks import on_skin_sub_tabs_update
-
 
 class SuperSkinAdvancedSettings(bpy.types.PropertyGroup):
     bone_list_filter_mode: bpy.props.EnumProperty(
@@ -26,6 +23,9 @@ class SuperSkinAdvancedSettings(bpy.types.PropertyGroup):
              "longer matches a vertex group), hiding every real "
              "vertex-group row",
              'ERROR', 2),
+            ('MASK', "Filter Mask",
+             "Show only the layer mask row, hiding every bone/orphan row",
+             'MOD_MASK', 3),
         ],
         default='NONE',
     )
@@ -52,6 +52,16 @@ class SuperSkinSelectionStorage(bpy.types.PropertyGroup):
                     "has no real vertex group to be 'active' for paint "
                     "ops), and selecting a real bone row clears this back "
                     "to empty — only one of the two is ever populated.",
+    )
+
+    active_is_mask: bpy.props.BoolProperty(
+        default=False,
+        description="Set when the virtual Mask row is the active selection "
+                    "in the Deform Bones list. Extends the last_clicked_index "
+                    "/ active_orphan_name tri-state — exactly one of the "
+                    "three is ever populated at a time. Selecting the Mask "
+                    "row clears the other two to -1/empty, and selecting a "
+                    "real or orphan bone row clears this back to False.",
     )
 
     filter_name: bpy.props.StringProperty(
@@ -99,6 +109,7 @@ class SuperSkinBoneListItem(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty(name="Bone Name")
     vg_index: bpy.props.IntProperty(name="Vertex Group Index", default=-1)
     is_orphan: bpy.props.BoolProperty(name="Is Orphan", default=False)
+    is_mask: bpy.props.BoolProperty(name="Is Mask", default=False)
     lock_weight: bpy.props.BoolProperty(name="Lock Weight", default=False)
     classification: bpy.props.StringProperty(name="Orphan Classification", default="")
     suggested_target: bpy.props.StringProperty(name="Suggested Remap Target", default="")
@@ -121,13 +132,6 @@ def register():
     bpy.types.Scene.superskin_is_mask_mode = bpy.props.BoolProperty(default=False)
     bpy.types.Scene.superskin_internal_transaction = bpy.props.BoolProperty(default=False)
 
-    bpy.types.Scene.superskin_skin_sub_tabs = bpy.props.BoolProperty(
-        name="Layer Mode",
-        description="ON = Layer mode (mask/weight layers), OFF = Deform Bone mode",
-        default=False,
-        update=on_skin_sub_tabs_update,
-    )
-
     bpy.types.Object.superskin_storage = bpy.props.PointerProperty(type=SuperSkinSelectionStorage)
     bpy.types.Object.superskin_layers_collection = bpy.props.CollectionProperty(type=SuperSkinLayerItem)
     bpy.types.Object.superskin_layers_idx = bpy.props.IntProperty(name="Layer List Index", default=0)
@@ -143,7 +147,6 @@ def unregister():
     del bpy.types.Object.superskin_storage
     del bpy.types.Scene.superskin_internal_transaction
     del bpy.types.Scene.superskin_is_mask_mode
-    del bpy.types.Scene.superskin_skin_sub_tabs
     del bpy.types.Scene.superskin_adv_settings
 
     for cls in reversed(classes):

@@ -50,7 +50,7 @@ The current architecture is `Blender Operator → CoreFacade → FeatureDomain`.
 - **Description:** Returns the active Blender Mesh datablock wrapped by the controller.
 
 ### `is_mask_context() -> bool`
-- **Description:** Returns `True` if the UI is currently in a mask-painting context (`superskin_is_mask_mode` or `superskin_skin_sub_tabs` is enabled).
+- **Description:** Returns `True` if the UI is currently in a mask-painting context (`superskin_is_mask_mode` is enabled). This flag is a derived side effect, written by `apply_active_bone()` on every call from `obj.superskin_storage.active_is_mask` — the Deform Bones list's Mask virtual row is the single source of truth; do not toggle `superskin_is_mask_mode` directly from feature code.
 
 ### `get_local_mapping() -> tuple[dict[str, int], dict[int, str]]`
 - **Description:** Returns two-way fast-lookup tables for real vertex groups: `(bone_to_id, id_to_bone)`.

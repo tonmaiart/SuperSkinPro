@@ -62,18 +62,17 @@ class ContextSelectionService:
     def is_mask_context(scene) -> bool:
         """Return True if the UI is currently in a mask-painting context.
 
-        Checks both the mask-mode flag (superskin_is_mask_mode) and the
-        sub-tab flag (superskin_skin_sub_tabs) that also activates mask paths.
+        Checks the mask-mode flag (superskin_is_mask_mode), which is written
+        as a derived side effect by core/ui_controller/layer_crud.py's
+        apply_active_bone() every time the Deform Bones list's active row
+        changes (see docs/bug-history/0003 for the tri-state selection
+        pattern this flag is derived from).
 
         Args:
-            scene: bpy.types.Scene -- the scene carrying the flag properties.
+            scene: bpy.types.Scene -- the scene carrying the flag property.
         """
         try:
-            if getattr(scene, "superskin_is_mask_mode", False):
-                return True
-            if getattr(scene, "superskin_skin_sub_tabs", False):
-                return True
-            return False
+            return bool(getattr(scene, "superskin_is_mask_mode", False))
         except Exception:
             return False
 

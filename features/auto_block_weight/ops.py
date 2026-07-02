@@ -11,8 +11,8 @@ class MESH_OT_auto_assign_closest_unlocked_bone(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        if getattr(context.scene, "superskin_skin_sub_tabs", False):
-            self.report({'WARNING'}, "Auto Assign is not available in Layers Management mode")
+        if getattr(context.scene, "superskin_is_mask_mode", False):
+            self.report({'WARNING'}, "Auto Assign is not available while the Mask row is active")
             return {'CANCELLED'}
 
         return run_domain_via_unified(context, "auto_block", "auto")

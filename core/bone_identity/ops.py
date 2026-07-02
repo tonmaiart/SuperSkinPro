@@ -32,6 +32,7 @@ class SUPERSKIN_OT_select_orphan_bone_row(bpy.types.Operator):
         storage = obj.superskin_storage
         storage.active_orphan_name = self.orphan_name
         storage.last_clicked_index = -1
+        storage.active_is_mask = False
         _sync_bones_idx_to_orphan(obj, self.orphan_name)
         context.area.tag_redraw()
         return {'FINISHED'}

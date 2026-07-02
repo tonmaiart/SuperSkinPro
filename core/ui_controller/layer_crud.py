@@ -5,7 +5,6 @@ Every function takes the UIController instance as its first parameter (``ctrl``)
 
 import bpy
 from .undo_manager import skin_transaction
-from . import pipeline as _pipeline
 from ...core_subsystems.topology_cache_manager import TopologyCacheManager
 
 
@@ -269,25 +268,48 @@ def set_active_bone_name(ctrl, name: str, layer_index: int = None):
 
 
 def apply_active_bone(ctrl):
+    """Route the native active-VG pointer to whatever the Deform Bones
+    list's active row is: the Mask virtual row, or a real bone.
+
+    ``obj.superskin_storage.active_is_mask`` is checked first and
+    short-circuits — it is the single source of truth for "is the Mask row
+    selected," extending the last_clicked_index / active_orphan_name
+    tri-state from docs/bug-history/0003. ``scene.superskin_is_mask_mode``
+    is written here as a derived side effect on every call, so the many
+    other consumers of ``is_mask_context()`` keep working unchanged.
+    """
+    obj = ctrl.obj
+    storage = obj.superskin_storage
+
+    try:
+        ctrl.ctx.scene.superskin_is_mask_mode = bool(storage.active_is_mask)
+    except Exception:
+        pass
+
+    if storage.active_is_mask:
+        try:
+            storage.last_clicked_index = -1
+            mask_vg = obj.vertex_groups.get("__ssp_m")
+            if mask_vg is not None:
+                obj.vertex_groups.active_index = mask_vg.index
+        except Exception:
+            pass
+        return
+
     name = get_active_bone_name(ctrl)
     if not name:
         return
-    vg = ctrl.obj.vertex_groups.get(name)
+    vg = obj.vertex_groups.get(name)
     if vg is None:
         return
     try:
-        ctrl.obj.superskin_storage.last_clicked_index = vg.index
+        storage.last_clicked_index = vg.index
     except Exception:
         pass
     # Also set Blender's native active_index so the built-in Vertex Group
     # Weight Overlay renders the correct weights without a custom GPU shader.
     try:
-        obj = ctrl.obj
-        if _pipeline.is_mask_context(ctrl):
-            mask_vg = obj.vertex_groups.get("__ssp_m")
-            if mask_vg is not None:
-                obj.vertex_groups.active_index = mask_vg.index
-        elif obj.mode == 'EDIT':
+        if obj.mode == 'EDIT':
             bone_to_id, _ = ctrl.storage.get_unified_mapping(obj)
             bone_id = bone_to_id.get(name)
             if bone_id is not None:
@@ -295,8 +317,7 @@ def apply_active_bone(ctrl):
                 if temp_vg is not None:
                     obj.vertex_groups.active_index = temp_vg.index
         else:
-            if vg is not None:
-                obj.vertex_groups.active_index = vg.index
+            obj.vertex_groups.active_index = vg.index
     except Exception:
         pass
 
