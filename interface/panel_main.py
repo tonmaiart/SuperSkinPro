@@ -23,7 +23,8 @@ class VIEW3D_PT_mw_master_modular_panel(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        return context.mode in ('OBJECT', 'EDIT_MESH')
+        from ..core.facade import CoreFacade
+        return context.mode in ('OBJECT', 'EDIT_MESH') and CoreFacade.is_system_activated()
 
     def draw(self, context):
         layout = self.layout

@@ -7,6 +7,7 @@ directly so this module has zero imports from core/ sub-modules.
 
 import array
 import json
+import time
 import bpy
 import bmesh
 import gpu
@@ -28,12 +29,21 @@ _active = False
 _draw_handle = None
 _hud_handle = None
 
+# _user_enabled: the user's own toggle intent, independent of temporary
+# mask suppression. _suppressed_by_mask: True only when _active is False
+# specifically because the watcher auto-stopped it for the mask row (not
+# because the user turned it off) — see start()/stop()/_watcher_tick().
+_user_enabled = False
+_suppressed_by_mask = False
+_watch_timer_registered = False
+
 # ── Three-tier GPU cache ────────────────────────────────────────────────────
 _topo_cache = {
     "batch_wire": None,
     "tri_indices": None,
     "coords_3d": None,
     "topo_key": None,
+    "structural_key": None,
 }
 _sel_cache = {
     "batch_sel": None,
@@ -44,6 +54,30 @@ _col_cache = {
     "batch_col": None,
     "color_key": None,
 }
+
+# The color cache key includes the active VG (see _make_color_key) so the
+# active-bone highlight updates live -- but the bone picker's hover preview
+# changes the active VG on every newly-hovered bone while sweeping the mouse
+# across the armature, which without a floor would re-run the full per-vertex
+# blend (_compute_multi_rainbow_colors) and rebuild+re-upload the entire GPU
+# color batch on every single hover change, multiple times a second. Topology
+# changes (rarer, correctness-sensitive) still recompute immediately; only
+# the active-VG-only case is throttled.
+_MIN_COLOR_RECOMPUTE_INTERVAL = 0.08  # ~12Hz ceiling
+_last_color_compute_time = 0.0
+
+# Same idea for the full topology/coords rebuild (wire + selection-point +
+# color batches, all keyed off the same extracted coords_3d). frame_current
+# and __ssp_deform_gen are both included in topo_key on purpose (see
+# docs/bug-history/0010 — the deform-generation counter exists specifically
+# so a weight edit at a fixed frame still re-extracts deformed coordinates),
+# but that means dragging the timeline slider re-triggers the single most
+# expensive path (full coordinate extraction + wire/point/color GPU batch
+# rebuild) on every frame step. Vert/edge/face counts changing is a genuine
+# topology edit and always rebuilds immediately; a frame/deform-gen-only
+# change is throttled the same way the color-only path is above.
+_MIN_TOPO_RECOMPUTE_INTERVAL = 0.08  # ~12Hz ceiling
+_last_topo_compute_time = 0.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -300,6 +334,12 @@ def _build_tris_color_batch(vert_colors, coords_3d):
 #  Cache key builders
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _make_structural_key(obj, bm):
+    """Vert/edge/face counts only — a *real* topology edit (extrude, delete,
+    subdivide...) always changes this and must rebuild immediately."""
+    return (obj.name, id(obj.data), len(bm.verts), len(bm.edges), len(bm.faces))
+
+
 def _make_topo_key(obj, bm, frame):
     return (obj.name, id(obj.data), len(bm.verts), len(bm.edges),
             len(bm.faces), frame, obj.get("__ssp_deform_gen", 0))
@@ -340,11 +380,24 @@ def _draw():
     num_verts = len(bm.verts)
     frame = context.scene.frame_current
 
+    structural_key = _make_structural_key(obj, bm)
     topo_key = _make_topo_key(obj, bm, frame)
     sel_key = _make_sel_key(obj, bm, frame)
     color_key = _make_color_key(obj, bm, frame)
 
-    topo_stale = (_topo_cache.get("topo_key") != topo_key)
+    global _last_topo_compute_time
+    topo_key_mismatch = (_topo_cache.get("topo_key") != topo_key)
+    topo_stale = False
+    if topo_key_mismatch:
+        structural_stale = (_topo_cache.get("structural_key") != structural_key)
+        now = time.monotonic()
+        throttled = (not structural_stale) and (now - _last_topo_compute_time) < _MIN_TOPO_RECOMPUTE_INTERVAL
+        # A throttled skip deliberately does NOT touch topo_key/structural_key
+        # in the cache, so topo_key_mismatch stays True and the next redraw
+        # re-checks — once a real topology edit happens (always bypasses the
+        # throttle) or the throttle window passes, it catches up.
+        topo_stale = not throttled
+
     sel_stale = topo_stale or (_sel_cache.get("sel_key") != sel_key)
     color_stale = topo_stale or (_col_cache.get("color_key") != color_key)
 
@@ -362,6 +415,8 @@ def _draw():
                 coords_flat[b + 2] = v.co.z
         coords_3d = _build_topo_batches(bm, obj, coords_flat, num_verts)
         _topo_cache["topo_key"] = topo_key
+        _topo_cache["structural_key"] = structural_key
+        _last_topo_compute_time = time.monotonic()
         color_stale = True
         sel_stale = True
 
@@ -373,12 +428,22 @@ def _draw():
             _sel_cache["sel_key"] = sel_key
 
     if color_stale:
-        if coords_3d is None:
-            coords_3d = _topo_cache.get("coords_3d")
-        if coords_3d:
-            vert_colors = _compute_multi_rainbow_colors(obj, num_verts)
-            _build_tris_color_batch(vert_colors, coords_3d)
-            _col_cache["color_key"] = color_key
+        global _last_color_compute_time
+        now = time.monotonic()
+        # Topology changes always recompute immediately; an active-VG-only
+        # change (hover during bone picking) is throttled to a ceiling rate.
+        # color_key deliberately does NOT get updated on a throttled skip,
+        # so color_stale stays True and the next redraw re-checks — once the
+        # picker settles (or the throttle window passes), it catches up.
+        throttled = (not topo_stale) and (now - _last_color_compute_time) < _MIN_COLOR_RECOMPUTE_INTERVAL
+        if not throttled:
+            if coords_3d is None:
+                coords_3d = _topo_cache.get("coords_3d")
+            if coords_3d:
+                vert_colors = _compute_multi_rainbow_colors(obj, num_verts)
+                _build_tris_color_batch(vert_colors, coords_3d)
+                _col_cache["color_key"] = color_key
+                _last_color_compute_time = now
 
     mvp = gpu.matrix.get_projection_matrix() @ gpu.matrix.get_model_view_matrix()
 
@@ -471,7 +536,7 @@ def _restore_native_overlay():
                     pass
 
 
-def start():
+def _start_handlers():
     global _active, _draw_handle, _hud_handle
     if _active:
         return
@@ -485,7 +550,7 @@ def start():
     _active = True
 
 
-def stop():
+def _stop_handlers():
     global _active, _draw_handle, _hud_handle
     if not _active:
         return
@@ -499,16 +564,126 @@ def stop():
     _active = False
 
 
+def _active_obj_is_mask() -> bool:
+    obj = bpy.context.active_object
+    storage = getattr(obj, "superskin_storage", None) if obj is not None else None
+    return bool(storage is not None and storage.active_is_mask)
+
+
+def start():
+    """User-facing enable. Suppressed (but remembered) while the active VG
+    is the mask row — see _watcher_tick()."""
+    global _user_enabled, _suppressed_by_mask
+    _user_enabled = True
+    if _active_obj_is_mask():
+        _suppressed_by_mask = True
+        return
+    _suppressed_by_mask = False
+    _start_handlers()
+
+
+def stop():
+    """User-facing disable. Clears the "want it on" intent entirely, so
+    switching away from the mask row later does not auto-resume it."""
+    global _user_enabled, _suppressed_by_mask
+    _user_enabled = False
+    _suppressed_by_mask = False
+    _stop_handlers()
+
+
 def toggle():
+    stop() if _user_enabled else start()
+
+
+def is_enabled() -> bool:
+    """User-facing on/off state — True even while temporarily suppressed
+    by the mask row, since the user's own intent is still "on"."""
+    return _user_enabled
+
+
+_WATCH_INTERVAL = 0.1
+
+
+def _watcher_tick():
+    """bpy.app.timers watcher, two independent jobs per tick:
+
+    1. Auto-stop the GPU handlers while the active VG is the mask row,
+       auto-resume when it changes back to a real bone — only when the
+       user's own toggle currently wants this on. Nothing else can observe
+       an obj.superskin_storage.active_is_mask change outside the draw
+       cycle without depsgraph support (custom PropertyGroup toggles don't
+       reliably trigger depsgraph_update_post — see docs/bug-history).
+
+    2. Self-detect staleness and force a redraw. Weight-apply and undo both
+       bump obj["__ssp_deform_gen"] (see docs/bug-history/0010), which is
+       already part of topo_key/color_key — so the *next* draw would
+       correctly notice and rebuild. The gap is that nothing guarantees a
+       *next draw actually happens* promptly after those operations; the
+       only previously-reliable trigger was nudging the timeline (which
+       changes frame_current, another key field, and Blender redraws for
+       playback regardless). Polling here — comparing a freshly-built key
+       against what the cache last actually drew — makes multi_color_preview
+       responsible for noticing its own staleness, instead of requiring
+       every weight-mutating feature to remember to poke this one's redraw.
+    """
+    global _suppressed_by_mask
+    if _user_enabled:
+        is_mask = _active_obj_is_mask()
+        if is_mask and _active:
+            _suppressed_by_mask = True
+            _stop_handlers()
+            _tag_redraw_all()
+        elif not is_mask and _suppressed_by_mask and not _active:
+            _suppressed_by_mask = False
+            _start_handlers()
+            _tag_redraw_all()
+
     if _active:
-        stop()
-    else:
-        start()
+        obj = bpy.context.active_object
+        if obj is not None and obj.type == 'MESH' and obj.mode == 'EDIT':
+            try:
+                bm = bmesh.from_edit_mesh(obj.data)
+                frame = bpy.context.scene.frame_current
+                stale = (
+                    _make_topo_key(obj, bm, frame) != _topo_cache.get("topo_key")
+                    or _make_color_key(obj, bm, frame) != _col_cache.get("color_key")
+                )
+                if stale:
+                    _tag_redraw_all()
+            except Exception:
+                pass
+
+    return _WATCH_INTERVAL
+
+
+def _tag_redraw_all():
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
 
 
 def cleanup():
     """Remove all draw handles — called from domain unregister()."""
-    stop()
+    global _user_enabled, _suppressed_by_mask
+    _user_enabled = False
+    _suppressed_by_mask = False
+    _stop_handlers()
+
+
+def register():
+    global _watch_timer_registered
+    if not _watch_timer_registered:
+        bpy.app.timers.register(_watcher_tick, first_interval=_WATCH_INTERVAL, persistent=True)
+        _watch_timer_registered = True
+
+
+def unregister():
+    global _watch_timer_registered
+    if _watch_timer_registered and bpy.app.timers.is_registered(_watcher_tick):
+        bpy.app.timers.unregister(_watcher_tick)
+    _watch_timer_registered = False
+    cleanup()
 
 
 def _invalidate_all():

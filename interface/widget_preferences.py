@@ -245,14 +245,13 @@ def _draw_license(layout, prefs):
     lic = prefs.license
     box = layout.box()
 
-    limit = LicenseGateway.layer_limit()
-    if limit is None:
+    if LicenseGateway.is_pro():
         box.label(text="Status: Pro Activated", icon='CHECKMARK')
     else:
-        box.label(text=f"Status: Free (max {limit} layers)", icon='INFO')
+        box.label(text="Status: Not Activated", icon='LOCKED')
 
-    box.prop(lic, "license_key", text="License Key")
-    box.operator("superskin.activate_license", text="Activate", icon='UNLOCKED')
+    box.label(text="Manage activation from the 3D Viewport sidebar")
+    box.label(text="(Super Skin Pro tab, shown while locked).")
 
     if lic.status_message:
         box.label(text=lic.status_message)

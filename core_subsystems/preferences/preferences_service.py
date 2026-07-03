@@ -10,9 +10,20 @@ import bpy
 
 from . import io
 
-# Hoisted from multiple classmethods — converted from absolute 'SuperSkinPro.*'
-# imports to relative imports for Blender Extensions Platform compatibility.
-from ...interface.registry.register_api import UnifiedRegistry
+# UnifiedRegistry is deliberately function-scoped at every call site below,
+# not hoisted to module scope. core_subsystems is imported (and its own
+# reload cascade runs) BEFORE interface/__init__.py's cascade reloads
+# interface.registry.register_api -- a module-level `from
+# ...interface.registry.register_api import UnifiedRegistry` here would bind
+# to that pre-reload UnifiedRegistry class, permanently disconnected from
+# the one every features/*/*_feature.py module actually registers into
+# (which import register_api only after features.register() runs, once
+# interface's reload has already settled). The symptom: UnifiedRegistry
+# .get_all() always returns [] from inside this file, so every feature
+# extension's populate()/serialize_into() silently never runs -- see
+# docs/bug-history for the mirror-keywords-never-persist report this was
+# diagnosed from. Importing inside each method instead resolves the name
+# at call time, after all reload cascades have finished.
 # MirrorPreferencesService kept function-scoped in mirror accessor methods —
 # hoisting it triggers loading the entire features package during core_subsystems
 # initialisation, creating a circular import back through ui.utils.
@@ -78,8 +89,10 @@ class PreferencesService:
     def load(cls) -> None:
         """Read default.json + user.json, merge, populate core + extension PropertyGroups.
 
-        Hoisted imports: PrefsExtensionRegistry, UnifiedRegistry.
+        Function-scoped import: UnifiedRegistry (see module docstring above).
         """
+        from ...interface.registry.register_api import UnifiedRegistry
+
         cls._loading = True
         try:
             default = _get_default_dict()
@@ -120,10 +133,12 @@ class PreferencesService:
         nothing needs saving mid-populate, and doing so would only persist a
         torn snapshot.
 
-        Hoisted imports: PrefsExtensionRegistry, UnifiedRegistry.
+        Function-scoped import: UnifiedRegistry (see module docstring above).
         """
         if cls._loading:
             return
+
+        from ...interface.registry.register_api import UnifiedRegistry
 
         prefs = bpy.context.window_manager.superskin_prefs
         data  = cls._dict_from_property_group(prefs)
@@ -144,8 +159,10 @@ class PreferencesService:
         Does not write to disk -- see the `_loading` guard docstring above;
         this suppresses the same write-through reentrancy that load() does.
 
-        Hoisted imports: PrefsExtensionRegistry, UnifiedRegistry.
+        Function-scoped import: UnifiedRegistry (see module docstring above).
         """
+        from ...interface.registry.register_api import UnifiedRegistry
+
         cls._loading = True
         try:
             default = _get_default_dict()
@@ -298,6 +315,12 @@ class PreferencesService:
         prefs.license.status_message   = lic.get("status_message",   "")
         prefs.license.license_key      = lic.get("license_key",      "")
 
+        # ── Debug Tools ──
+        from ..debug_logging.debug_log_service import CATEGORIES
+        debug_data = data.get("debug", {})
+        for cat in CATEGORIES:
+            setattr(prefs.debug, cat, bool(debug_data.get(cat, False)))
+
     @staticmethod
     def _dict_from_property_group(prefs) -> dict:
         """Serialize the core PropertyGroup back into a dict for user.json.
@@ -319,6 +342,10 @@ class PreferencesService:
         }
 
         lic = prefs.license
+
+        from ..debug_logging.debug_log_service import CATEGORIES
+        debug = {cat: getattr(prefs.debug, cat) for cat in CATEGORIES}
+
         return {
             "_schema_version": 1,
             "customize": customize,
@@ -327,4 +354,5 @@ class PreferencesService:
                 "activation_token": lic.activation_token,
                 "status_message":   lic.status_message,
             },
+            "debug": debug,
         }

@@ -8,7 +8,6 @@ domain extraction.
 import bpy
 
 from ...core.facade import CoreFacade
-from ...core_subsystems.license_gateway import LicenseGateway
 from ...interface.utils.utils import (
     _is_valid_mesh,
     _has_layer_system,
@@ -36,7 +35,7 @@ class SUPERSKIN_OT_layer_toggle_visible_by_item(bpy.types.Operator):
         if not _has_layer_system(obj):
             return {'CANCELLED'}
 
-        _run_in_object_context(context, CoreFacade(context).get_ctrl().toggle_visible, self.layer_index)
+        _run_in_object_context(context, CoreFacade(context).toggle_visible, self.layer_index)
         sync_layers_to_ui_collection(obj)
         for window in context.window_manager.windows:
             for area in window.screen.areas:
@@ -58,17 +57,10 @@ class SUPERSKIN_OT_layer_add(bpy.types.Operator):
         if not _is_valid_mesh(obj):
             return {'CANCELLED'}
 
-        ctrl = CoreFacade(context).get_ctrl()
+        ctrl = CoreFacade(context)
         ctrl.init_layer_system()  # no-op if already initialised
         meta = ctrl.layer_meta_list()
         existing = len(meta)
-
-        limit = LicenseGateway.layer_limit()
-        if limit is not None and existing >= limit:
-            self.report({'WARNING'},
-                        f"Free version is limited to {limit} layers — activate a Pro "
-                        f"license (Preferences > License) to add more")
-            return {'CANCELLED'}
 
         new_idx = _run_in_object_context(context, ctrl.create_layer, f"Layer {existing}")
         _select_only_layer(obj, new_idx)
@@ -89,7 +81,7 @@ class SUPERSKIN_OT_layer_remove(bpy.types.Operator):
             return {'CANCELLED'}
 
         target = _resolve_layer_target(obj, self.layer_index)
-        ctrl = CoreFacade(context).get_ctrl()
+        ctrl = CoreFacade(context)
         if target < 0:
             target = ctrl.active_layer_index
 
@@ -117,7 +109,7 @@ class SUPERSKIN_OT_layer_move(bpy.types.Operator):
             return {'CANCELLED'}
 
         target = _resolve_layer_target(obj, self.layer_index)
-        ctrl = CoreFacade(context).get_ctrl()
+        ctrl = CoreFacade(context)
         if target < 0:
             target = ctrl.active_layer_index
 
@@ -145,16 +137,9 @@ class SUPERSKIN_OT_layer_duplicate(bpy.types.Operator):
             return {'CANCELLED'}
 
         target = _resolve_layer_target(obj, self.layer_index)
-        ctrl = CoreFacade(context).get_ctrl()
+        ctrl = CoreFacade(context)
         if target < 0:
             target = ctrl.active_layer_index
-
-        limit = LicenseGateway.layer_limit()
-        if limit is not None and len(ctrl.layer_meta_list()) >= limit:
-            self.report({'WARNING'},
-                        f"Free version is limited to {limit} layers — activate a Pro "
-                        f"license (Preferences > License) to add more")
-            return {'CANCELLED'}
 
         new_idx = _run_in_object_context(context, ctrl.duplicate_layer, target)
         if new_idx is not None and new_idx >= 0:
@@ -195,7 +180,7 @@ class SUPERSKIN_OT_layer_merge_selected(bpy.types.Operator):
             self.report({'WARNING'}, "Select at least 2 layers to merge")
             return {'CANCELLED'}
 
-        ctrl = CoreFacade(context).get_ctrl()
+        ctrl = CoreFacade(context)
         target = ctrl.active_layer_index
         if target not in selected_indices:
             # Should not normally happen — on_single_select() always keeps
@@ -229,7 +214,7 @@ class SUPERSKIN_OT_layer_rename_active(bpy.types.Operator):
         if not _has_layer_system(obj):
             return {'CANCELLED'}
 
-        ctrl = CoreFacade(context).get_ctrl()
+        ctrl = CoreFacade(context)
         ctrl.rename_layer(ctrl.active_layer_index, self.new_name)
         sync_layers_to_ui_collection(obj)
         return {'FINISHED'}
@@ -239,7 +224,7 @@ class SUPERSKIN_OT_layer_rename_active(bpy.types.Operator):
         if not _has_layer_system(obj):
             return {'CANCELLED'}
 
-        ctrl = CoreFacade(context).get_ctrl()
+        ctrl = CoreFacade(context)
         self.new_name = ctrl.active_layer_name()
         return context.window_manager.invoke_props_dialog(self, width=250)
 

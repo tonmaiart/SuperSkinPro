@@ -191,35 +191,48 @@ def write_layers_to_target(context, target, insert_method, layer_payloads):
     # them back-to-front makes the *first* payload end up on top, which
     # matches the source's own stack order (e.g. Head, Arm, Base stays
     # Head, Arm, Base instead of coming out as Base, Arm, Head).
-    last_slot = -1
-    for name, weight_dict, mask_dict in reversed(layer_payloads):
-        unique_name = unique_layer_name(existing_names, name)
-        existing_names.add(unique_name)
+    #
+    # The whole create/switch/write/remove sequence runs inside a single
+    # _run_in_object_context() call rather than one per structural call:
+    # switch_to_layer() is mode-aware but write_layer_dict() is not (see
+    # core/facade/README.md) — wrapping only create_layer()/remove_layer()
+    # individually would restore Edit Mode in between calls, right before
+    # the non-mode-aware write_layer_dict() runs, silently reintroducing
+    # the 0018/0019 stale-store class of bug if `target` happens to already
+    # be in Edit Mode (multi-object edit) when this runs.
+    def _do_write():
+        last_slot = -1
+        for name, weight_dict, mask_dict in reversed(layer_payloads):
+            unique_name = unique_layer_name(existing_names, name)
+            existing_names.add(unique_name)
 
-        new_slot = _run_in_object_context(context, ctrl.create_layer, unique_name)
-        CoreFacade.debug_log(
-            "feature_domains",
-            f"weight_transfer: create_layer(name={unique_name!r}) on {target.name!r} -> slot={new_slot} verts={len(weight_dict)}",
-        )
-        if new_slot is None or new_slot < 0:
-            continue
-        last_slot = new_slot
-        facade.switch_to_layer(new_slot, push_undo=False)
-        facade.write_layer_dict(weight_dict)
-        if mask_dict:
-            # A freshly created Layer has no mask coverage by default, so
-            # every vertex reads as "outside the mask" (Mask Gap error)
-            # even though weight data was written.
-            facade.write_mask_dict(mask_dict)
+            new_slot = ctrl.create_layer(unique_name)
+            CoreFacade.debug_log(
+                "feature_domains",
+                f"weight_transfer: create_layer(name={unique_name!r}) on {target.name!r} -> slot={new_slot} verts={len(weight_dict)}",
+            )
+            if new_slot is None or new_slot < 0:
+                continue
+            last_slot = new_slot
+            facade.switch_to_layer(new_slot, push_undo=False)
+            facade.write_layer_dict(weight_dict)
+            if mask_dict:
+                # A freshly created Layer has no mask coverage by default, so
+                # every vertex reads as "outside the mask" (Mask Gap error)
+                # even though weight data was written.
+                facade.write_mask_dict(mask_dict)
 
-    if old_slots_to_remove:
-        for slot in old_slots_to_remove:
-            _run_in_object_context(context, ctrl.remove_layer, slot)
-        CoreFacade.debug_log(
-            "feature_domains",
-            f"weight_transfer: removed {len(old_slots_to_remove)} pre-existing layer(s) on {target.name!r} after creating replacements",
-        )
-        last_slot = ctrl.active_layer_index
+        if old_slots_to_remove:
+            for slot in old_slots_to_remove:
+                ctrl.remove_layer(slot)
+            CoreFacade.debug_log(
+                "feature_domains",
+                f"weight_transfer: removed {len(old_slots_to_remove)} pre-existing layer(s) on {target.name!r} after creating replacements",
+            )
+            return ctrl.active_layer_index
+        return last_slot
+
+    last_slot = _run_in_object_context(context, _do_write)
 
     facade.finish()
 

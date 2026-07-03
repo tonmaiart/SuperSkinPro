@@ -164,6 +164,8 @@ def _auto_init_layers():
             for area in window.screen.areas:
                 if area.type == 'VIEW_3D':
                     area.tag_redraw()
+    except ValueError:
+        pass  # Not activated -- the panel that scheduled this timer is now hidden.
     finally:
         _auto_init_pending = False
 

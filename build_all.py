@@ -17,7 +17,12 @@ def build_and_deploy():
     rust_dir = os.path.join(os.path.dirname(__file__), "rust_logic")
     print("🔨 Compiling Rust project in release mode...")
     
-    result = subprocess.run(["cargo", "build", "--release"], cwd=rust_dir)
+    # แก้ไขปัญหา PyO3 ค้นหา venv ผิดพลาดด้วยการบังคับให้ใช้ Python3 ของระบบปฏิบัติการ
+    custom_env = os.environ.copy()
+    custom_env["PYO3_PYTHON"] = "python3"
+    
+    # รันคำสั่งคอมไพล์โดยส่งระบบสภาพแวดล้อมใหม่เข้าไป
+    result = subprocess.run(["cargo", "build", "--release"], cwd=rust_dir, env=custom_env)
     if result.returncode != 0:
         print("❌ Compilation failed!")
         sys.exit(1)
@@ -42,10 +47,10 @@ def build_and_deploy():
         print(f"❌ Unsupported OS: {current_os}")
         sys.exit(1)
 
-    # 4. ทำการคัดลอกถอยหลังข้ามแดนไปยังโฟลเดอร์จัดเก็บ
+    # 4. ทำการคัดลอกไฟล์ไปยังโฟลเดอร์จัดเก็บปลายทางตามระบบ OS
     if os.path.exists(src_file):
         shutil.copy(src_file, dst_file)
-        print(f"📦 Successfully deployed Binary to: bin/{current_os}/")
+        print(f"📦 Successfully deployed Binary to: bin/{current_os}/rust_logic" + (".pyd" if current_os == "windows" else ".so"))
     else:
         print(f"❌ Built binary not found at: {src_file}")
 

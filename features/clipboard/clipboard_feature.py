@@ -72,20 +72,19 @@ class ClipboardFeature(UnifiedFeatureExtension):
 
     def execute(self, action: str, context, core_facade: CoreFacade) -> dict:
         from .logic import copy, cut, paste, select_affected
-        ctrl = core_facade.get_ctrl()
         try:
             if action == "copy":
-                copy(ctrl)
+                copy(core_facade)
             elif action == "cut":
-                cut(ctrl)
+                cut(core_facade)
             elif action == "paste_add":
-                paste(ctrl, mode='ADD')
+                paste(core_facade, mode='ADD')
             elif action == "paste_subtract":
-                paste(ctrl, mode='SUBTRACT')
+                paste(core_facade, mode='SUBTRACT')
             elif action == "paste_replace":
-                paste(ctrl, mode='REPLACE')
+                paste(core_facade, mode='REPLACE')
             elif action == "select_affected":
-                return {"status": "FINISHED", "data": select_affected(ctrl)}
+                return {"status": "FINISHED", "data": select_affected(core_facade)}
             else:
                 return {"status": "CANCELLED", "message": f"Unknown action: {action}"}
         except ValueError as e:

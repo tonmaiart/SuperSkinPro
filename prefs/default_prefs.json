@@ -48,5 +48,13 @@
     "license_key": "",
     "activation_token": "",
     "status_message": ""
+  },
+  "debug": {
+    "temp_vg": false,
+    "core_pipeline": false,
+    "rust_ffi": false,
+    "viewport_viz": false,
+    "bone_id": false,
+    "feature_domains": false
   }
 }

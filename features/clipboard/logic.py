@@ -36,22 +36,22 @@ _clipboard_manager = ClipboardManager()
 def _copy_impl(ctrl, is_mask: bool) -> dict:
     """Copy the active layer or mask to the clipboard, returning the captured data."""
     clip_mgr = _clipboard_manager
-    selected = ctrl._selected_verts()
+    selected = ctrl.get_selected_verts()
     all_verts_count = len(ctrl.mesh.vertices)
 
     if len(selected) == 0 or len(selected) == all_verts_count:
         if is_mask:
-            mask_dict = ctrl.storage.read_active_mask_dict()
+            mask_dict = ctrl.get_active_mask_dict()
             subset = {str(k): v for k, v in mask_dict.items()}
         else:
-            layer_dict = ctrl.storage.read_active_layer_dict()
+            layer_dict = ctrl.read_active_layer()
             subset = {str(k): dict(w) for k, w in layer_dict.items()}
     else:
         if is_mask:
-            mask_dict = ctrl.storage.read_active_mask_dict()
+            mask_dict = ctrl.get_active_mask_dict()
             subset = data_ops.extract_mask_subset(mask_dict, selected)
         else:
-            layer_dict = ctrl.storage.read_active_layer_dict()
+            layer_dict = ctrl.read_active_layer()
             subset = data_ops.extract_weight_subset(layer_dict, selected)
 
     if not subset:
@@ -65,24 +65,24 @@ def _copy_impl(ctrl, is_mask: bool) -> dict:
 def _cut_impl(ctrl, is_mask: bool) -> dict:
     """Copy to clipboard, then clear source data from the active layer/mask."""
     clip = _copy_impl(ctrl, is_mask)
-    selected = ctrl._selected_verts()
+    selected = ctrl.get_selected_verts()
     all_verts_count = len(ctrl.mesh.vertices)
 
     if len(selected) == 0 or len(selected) == all_verts_count:
         if is_mask:
-            ctrl.storage.write_mask_dict(ctrl.active_layer_index, {})
+            ctrl.write_mask_dict({})
         else:
-            ctrl.storage.write_layer_dict(ctrl.active_layer_index, {})
+            ctrl.write_active_layer({}, color_only=False)
     else:
         sel_set = {int(v) for v in selected}
         if is_mask:
-            mask_dict = ctrl.storage.read_active_mask_dict()
+            mask_dict = ctrl.get_active_mask_dict()
             remaining = {int(k): w for k, w in mask_dict.items() if int(k) not in sel_set}
-            ctrl.storage.write_mask_dict(ctrl.active_layer_index, remaining)
+            ctrl.write_mask_dict(remaining)
         else:
-            layer_dict = ctrl.storage.read_active_layer_dict()
+            layer_dict = ctrl.read_active_layer()
             remaining = {int(k): dict(w) for k, w in layer_dict.items() if int(k) not in sel_set}
-            ctrl.storage.write_layer_dict(ctrl.active_layer_index, remaining)
+            ctrl.write_active_layer(remaining, color_only=False)
 
     ctrl._finish(color_only=False)
     return clip
@@ -100,7 +100,7 @@ def _paste_impl(ctrl, mode: str, is_mask_target: bool) -> dict:
     source_mesh_name = clip["source_mesh"]
 
     all_verts_count = len(ctrl.mesh.vertices)
-    selected_targets = ctrl._selected_verts()
+    selected_targets = ctrl.get_selected_verts()
     target_verts = selected_targets if len(selected_targets) > 0 else list(range(all_verts_count))
 
     target_vg_names = {vg.name for vg in ctrl.obj.vertex_groups}
@@ -176,13 +176,13 @@ def paste_data_manual(ctrl, mode: str = 'REPLACE') -> dict:
 
 def select_affected(ctrl) -> set:
     if ctrl._is_mask_context():
-        mask_dict = ctrl.storage.read_active_mask_dict()
+        mask_dict = ctrl.get_active_mask_dict()
         return data_ops.vertices_with_mask_override(mask_dict)
     active_id = ctrl._active_vg_id()
     if active_id is None:
         raise ValueError("No active Vertex Group selected")
     active_name = ctrl.obj.vertex_groups[active_id].name
-    layer_dict = ctrl.storage.read_active_layer_dict()
+    layer_dict = ctrl.read_active_layer()
     return data_ops.vertices_with_weight(layer_dict, active_name)
 
 
@@ -216,7 +216,7 @@ def _convert_mask_to_weight(mask_data: dict, ctrl) -> dict:
 # ═════════════════════════════════════════════════════════════════════════
 
 def _merge_weight_paste(ctrl, resolved: dict[int, dict[str, float]], mode: str = 'REPLACE'):
-    layer_dict = {int(k): v for k, v in ctrl.storage.read_active_layer_dict().items()}
+    layer_dict = {int(k): v for k, v in ctrl.read_active_layer().items()}
     for v_int, bone_weights in resolved.items():
         if mode == 'REPLACE':
             layer_dict[v_int] = {bone_name: float(w) for bone_name, w in bone_weights.items()}
@@ -227,10 +227,10 @@ def _merge_weight_paste(ctrl, resolved: dict[int, dict[str, float]], mode: str =
                 current = existing.get(bone_name, 0.0)
                 if mode == 'ADD': existing[bone_name] = min(1.0, current + float(w))
                 elif mode == 'SUBTRACT': existing[bone_name] = max(0.0, current - float(w))
-    ctrl.storage.write_layer_dict(ctrl.active_layer_index, layer_dict)
+    ctrl.write_active_layer(layer_dict, color_only=False)
 
 def _merge_mask_paste(ctrl, resolved: dict[int, float], mode: str = 'REPLACE'):
-    mask_dict = {int(k): v for k, v in ctrl.storage.read_active_mask_dict().items()}
+    mask_dict = {int(k): v for k, v in ctrl.get_active_mask_dict().items()}
     for v_int, val in resolved.items():
         if mode == 'REPLACE':
             mask_dict[v_int] = float(val)
@@ -238,4 +238,4 @@ def _merge_mask_paste(ctrl, resolved: dict[int, float], mode: str = 'REPLACE'):
             current = float(mask_dict.get(v_int, 0.0))
             if mode == 'ADD': mask_dict[v_int] = min(1.0, current + float(val))
             elif mode == 'SUBTRACT': mask_dict[v_int] = max(0.0, current - float(val))
-    ctrl.storage.write_mask_dict(ctrl.active_layer_index, mask_dict)
+    ctrl.write_mask_dict(mask_dict)

@@ -45,6 +45,12 @@ class CoreFacade(ReadFacadeMixin, WriteFacadeMixin, VisualizerFacadeMixin):
         from ..layer_storage.storage_service import LayerStorageService
         from ...core_subsystems.layer_compositor import LayerCompositor
 
+        if not self.is_system_activated():
+            raise ValueError(
+                "SuperSkinPro is not activated — enter your Pro license key in "
+                "the 3D Viewport sidebar's Activation panel."
+            )
+
         self.ctx = context
         self._ctx = context      # alias — ContextSelectionService / is_mask_context
         self.context = context   # alias — features/clipboard/logic.py uses ctrl.context.window_manager
@@ -299,6 +305,18 @@ class CoreFacade(ReadFacadeMixin, WriteFacadeMixin, VisualizerFacadeMixin):
     def save_prefs(cls) -> None:
         from ...core_subsystems.preferences.preferences_service import PreferencesService
         PreferencesService.save_to_user_file()
+
+    @classmethod
+    def is_system_activated(cls) -> bool:
+        """True if a valid Pro license is currently activated.
+
+        Delegates to LicenseGateway.is_pro(), which always re-derives validity
+        via the compiled Rust HMAC check rather than trusting a cached flag.
+        Safe to call without an active mesh/context — unlike CoreFacade(context),
+        this does not construct an instance.
+        """
+        from ...core_subsystems.license_gateway import LicenseGateway
+        return LicenseGateway.is_pro()
 
     @classmethod
     def get_rust_gateway(cls, tag: str):

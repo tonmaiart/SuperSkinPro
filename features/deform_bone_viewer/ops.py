@@ -16,10 +16,6 @@ from ...interface.utils.utils import _is_valid_mesh
 # Hoisted from function bodies — converted from absolute 'SuperSkinPro.*'
 # imports to relative imports for Blender Extensions Platform compatibility.
 from ...core_subsystems.layer_compositor import LayerCompositor
-from ...core.layer_storage.temp_vg_bridge import (
-    read_temp_vgs_to_layer, delete_temp_vgs,
-)
-from ...core.layer_storage.storage_service import LayerStorageService
 
 
 # ==============================================================================
@@ -43,7 +39,7 @@ class SUPERSKIN_OT_toggle_vg_lock(bpy.types.Operator):
         if self.index < 0 or self.index >= len(vg_list):
             return {'CANCELLED'}
 
-        ctrl = CoreFacade(context).get_ctrl()
+        ctrl = CoreFacade(context)
 
         # Read current state from metadata — metadata is the single source of
         # truth for bone locks, not the native VertexGroup.lock_weight field.
@@ -81,12 +77,15 @@ class SUPERSKIN_OT_select_all_vgs(bpy.types.Operator):
             return {'CANCELLED'}
 
         storage = obj.superskin_storage
-        all_names = ",".join([vg.name for vg in obj.vertex_groups])
-        storage.selected_names = f",{all_names},"
+        names = [vg.name for vg in obj.vertex_groups]
+        mask_name = next((i.name for i in obj.superskin_bones_collection if i.is_mask), None)
+        if mask_name:
+            names.append(mask_name)
+        storage.selected_names = f",{','.join(names)},"
 
         # Persist selection to the active layer
         try:
-            ctrl = CoreFacade(context).get_ctrl()
+            ctrl = CoreFacade(context)
             ctrl.set_selected_bones(storage.selected_names)
         except Exception:
             pass
@@ -118,8 +117,18 @@ class OBJECT_OT_mw_select_affect_vertices(bpy.types.Operator):
             bpy.ops.object.mode_set(mode='EDIT')
 
         try:
-            ctrl = CoreFacade(context).get_ctrl()
-            affected_indices = ctrl.get_affected_vertex_indices()
+            ctrl = CoreFacade(context)
+            data_ops = CoreFacade.get_clipboard_data_ops()
+            if ctrl.is_mask_context():
+                mask_dict = ctrl.get_active_mask_dict()
+                affected_indices = data_ops.vertices_with_mask_override(mask_dict)
+            else:
+                active_id = ctrl.get_active_vg_id()
+                if active_id is None:
+                    raise ValueError("No active Vertex Group selected")
+                active_name = obj.vertex_groups[active_id].name
+                layer_dict = ctrl.read_active_layer()
+                affected_indices = data_ops.vertices_with_weight(layer_dict, active_name)
         except ValueError as e:
             self.report({'WARNING'}, str(e))
             return {'CANCELLED'}
@@ -169,7 +178,7 @@ class MESH_OT_show_affect_bone(bpy.types.Operator):
                 storage.selection_history = str(vg.index)
                 storage.last_clicked_index = vg.index
                 try:
-                    ctrl = CoreFacade(context).get_ctrl()
+                    ctrl = CoreFacade(context)
                     ctrl.set_selected_bones(storage.selected_names)
                     ctrl.set_active_bone_name(self.bone_name)
                 except Exception:
@@ -193,7 +202,7 @@ class MESH_OT_show_affect_bone(bpy.types.Operator):
 
         if selected_v_indices:
             try:
-                ctrl = CoreFacade(context).get_ctrl()
+                ctrl = CoreFacade(context)
                 layer_dict = ctrl.get_active_layer_weights_for_display()
             except ValueError:
                 layer_dict = {}
@@ -296,7 +305,7 @@ class OBJECT_OT_mw_select_specific_vertex_group(bpy.types.Operator):
             storage.selection_history = str(vg.index)
             storage.last_clicked_index = vg.index
             try:
-                ctrl = CoreFacade(context).get_ctrl()
+                ctrl = CoreFacade(context)
                 ctrl.set_selected_bones(storage.selected_names)
                 ctrl.set_active_bone_name(self.group_name)
             except Exception:
@@ -382,7 +391,11 @@ class SUPERSKIN_OT_save_weight_and_exit(bpy.types.Operator):
     bl_idname = "superskin.save_weight_and_exit"
     bl_label = "Save Weight and Exit"
     bl_description = "Commit modified temporary weights back into layer custom properties storage"
-    bl_options = {'REGISTER', 'UNDO'}
+    # No 'UNDO' here — this operator no longer mutates anything itself, it
+    # only dispatches to superskin.save_weights, which already pushes its
+    # own single undo step. Adding 'UNDO' here too would push a second,
+    # redundant snapshot of the same state change on every save.
+    bl_options = {'REGISTER'}
 
     @classmethod
     def poll(cls, context):
@@ -391,33 +404,27 @@ class SUPERSKIN_OT_save_weight_and_exit(bpy.types.Operator):
     def execute(self, context):
         obj = context.active_object
 
-        # Suppress internal transactional updates during the mode bounce.
-        was_suppressing = getattr(context.scene, "superskin_internal_transaction", False)
-        context.scene.superskin_internal_transaction = True
-
-        try:
-            # Force Object Mode to securely commit updates to custom ID data properties.
-            if obj.mode == 'EDIT':
-                bpy.ops.object.mode_set(mode='OBJECT')
-
-            storage = LayerStorageService(obj.data)
-            active_idx = storage.get_active_layer_index()
-
-            # Extract weights and masks from temporary vertex groups.
-            layer_dict, mask_dict, _ = read_temp_vgs_to_layer(obj)
-            storage.write_layer_dict(active_idx, layer_dict)
-            if mask_dict:
-                storage.write_mask_dict(active_idx, mask_dict)
-
-            # Delete all temporary vertex groups and properties.
-            delete_temp_vgs(obj)
-
-            # Inject an explicit undo step into Blender's history stack to maintain synchronization.
-            bpy.ops.ed.undo_push(message="SuperSkinPro: Save Layer Weights")
-
-        finally:
-            context.scene.superskin_internal_transaction = was_suppressing
-
+        # Delegates to superskin.save_weights (features/controller/ops_scene_modes.py)
+        # instead of re-reading/re-writing temp VGs here directly. Features
+        # are forbidden from importing each other's Python modules, but
+        # dispatching through a registered operator's own bl_idname is the
+        # sanctioned way to reuse another domain's logic without a hard
+        # import -- and controller is explicitly the cross-cutting domain
+        # for this kind of scene-mode transition (see the Domain Registry
+        # table in CLAUDE.md).
+        #
+        # This used to be an independent reimplementation that: read temp
+        # VGs via a different path than the Tab/auto-save-guard exit,
+        # never called finish() (so the real deform vertex groups could go
+        # stale until something else forced a reflatten), and pushed an
+        # extra explicit ed.undo_push() on top of the automatic one every
+        # UNDO-tagged operator already gets — that redundant undo snapshot
+        # was a meaningful, avoidable chunk of the slowness reported
+        # against a plain Tab exit. superskin.save_weights does none of
+        # that: bake happens once, while still in Edit Mode, before a
+        # single mode_set('OBJECT'), then finish() reflattens once.
+        if obj.mode == 'EDIT':
+            return bpy.ops.superskin.save_weights()
         return {'FINISHED'}
 
 

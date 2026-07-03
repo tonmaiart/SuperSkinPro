@@ -28,6 +28,10 @@ fn is_source_side(coord: (f64, f64, f64), axis_idx: usize, direction: &str) -> b
     }
 }
 
+// No longer called from `rust_mirror_apply` (superseded by the precomputed
+// `target_side_mask` — see that function's doc comment), kept for reference
+// symmetry with `is_source_side` above.
+#[allow(dead_code)]
 #[inline]
 fn is_target_side(coord: (f64, f64, f64), axis_idx: usize, direction: &str) -> bool {
     let eps = 1e-5_f64;
@@ -241,17 +245,34 @@ pub fn rust_mirror_generate_pairs(
 }
 
 /// Mirror of Python `mirror_logic.apply()` — ⚡ Int-ID pipeline
+///
+/// `target_side_mask[v_idx]` is `true` when a vertex counts as target-side.
+/// This is a **precomputed classification**, not a coordinate-sign test —
+/// see `features/mirror/logic.py`'s `classify_sides_by_topology()`: a raw
+/// coordinate sign misclassifies vertices whenever the mesh visually
+/// folds/intersects across the mirror plane (a vertex topologically part of
+/// the target side can have a coordinate that dips into source territory).
+/// `axis`/`direction` are still used for the purely geometric `flip_coord()`
+/// step below, which is unrelated to side classification.
+///
+/// Returns `(layer_dict, gap_verts)` — `gap_verts` lists every target-side
+/// vertex left with no weight on any mirrored (target) bone once the
+/// nearest-vertex pass below is done, e.g. because the flipped coordinate
+/// had no match within `KD_TREE_TOLERANCE` on an asymmetric mesh. The Python
+/// caller fills these via a BVH surface fallback — this function's own
+/// nearest-vertex behavior is otherwise unchanged.
 #[pyfunction]
 pub fn rust_mirror_apply(
     mut layer_dict: HashMap<i64, HashMap<i32, f64>>,
     id_pairs: HashMap<i32, i32>,
     vertex_groups_lock: HashMap<i32, bool>,
     vertex_coords: Vec<(f64, f64, f64)>,
+    target_side_mask: Vec<bool>,
     axis: String,
-    direction: String,
-) -> PyResult<HashMap<i64, HashMap<i32, f64>>> {
+    _direction: String,
+) -> PyResult<(HashMap<i64, HashMap<i32, f64>>, Vec<i64>)> {
     if id_pairs.is_empty() {
-        return Ok(layer_dict);
+        return Ok((layer_dict, Vec::new()));
     }
 
     let axis_idx = match axis.as_str() {
@@ -262,11 +283,15 @@ pub fn rust_mirror_apply(
     };
 
     let total_verts = vertex_coords.len();
+    let is_target = |v_idx: usize| -> bool {
+        target_side_mask.get(v_idx).copied().unwrap_or(false)
+    };
 
     let pair_bone_ids: HashSet<i32> = id_pairs
         .iter()
         .flat_map(|(&src, &tgt)| vec![src, tgt])
         .collect();
+    let tgt_bone_ids: HashSet<i32> = id_pairs.values().copied().collect();
 
     let mut modified_verts: HashSet<i64> = HashSet::new();
 
@@ -275,9 +300,8 @@ pub fn rust_mirror_apply(
     // ══════════════════════════════════════════════════════════════
     for v_idx in 0..total_verts {
         let v_idx_i64 = v_idx as i64;
-        let coord = vertex_coords[v_idx];
 
-        if !is_target_side(coord, axis_idx, &direction) {
+        if !is_target(v_idx) {
             continue;
         }
 
@@ -310,44 +334,61 @@ pub fn rust_mirror_apply(
     // ══════════════════════════════════════════════════════════════
     const KD_TREE_TOLERANCE: f64 = 0.05;
 
+    // Root cause of a confirmed bug: `find_nearest` used to search ALL of
+    // `vertex_coords` for the write destination, ignoring `target_side_mask`
+    // entirely. On a self-intersecting mesh, the geometrically nearest
+    // vertex to a flipped source coordinate can be one topology classifies
+    // as SOURCE-side (not target) — STEP 1 never clears that vertex's own
+    // pre-existing source-bone weight (it only clears target-side
+    // vertices), so writing the target bone into it left a single vertex
+    // holding BOTH bones at once (confirmed via a user's N-panel check:
+    // Leg.L and Leg.R simultaneously on one vertex). Restricting the
+    // search candidates to target-side vertices only closes this gap —
+    // matches `flat_bridge::flat_mirror_apply_mask`'s same restriction on
+    // the mask channel, which never had this bug.
+    let target_indices: Vec<usize> = (0..total_verts).filter(|&i| is_target(i)).collect();
+    let target_coords: Vec<(f64, f64, f64)> =
+        target_indices.iter().map(|&i| vertex_coords[i]).collect();
+
     // Collect vertices to process (layer_dict keys may change during iteration)
     let all_verts: Vec<i64> = layer_dict.keys().copied().collect();
 
-    for (&src_id, &tgt_id) in &id_pairs {
-        for &v_idx in &all_verts {
-            let vw = match layer_dict.get(&v_idx) {
-                Some(vw) => vw,
-                None => continue,
-            };
+    if !target_coords.is_empty() {
+        for (&src_id, &tgt_id) in &id_pairs {
+            for &v_idx in &all_verts {
+                let vw = match layer_dict.get(&v_idx) {
+                    Some(vw) => vw,
+                    None => continue,
+                };
 
-            if !vw.contains_key(&src_id) {
-                continue;
+                if !vw.contains_key(&src_id) {
+                    continue;
+                }
+
+                let weight_val = *vw.get(&src_id).unwrap();
+                if weight_val < 0.0001 {
+                    continue;
+                }
+
+                if is_target(v_idx as usize) {
+                    continue;
+                }
+
+                let coord = vertex_coords[v_idx as usize];
+                let flipped = flip_coord(coord, axis_idx);
+                let (tgt_local_idx, dist) = find_nearest(flipped, &target_coords);
+                let tgt_v_idx_i64 = target_indices[tgt_local_idx] as i64;
+
+                if dist >= KD_TREE_TOLERANCE {
+                    continue;
+                }
+
+                layer_dict
+                    .entry(tgt_v_idx_i64)
+                    .or_default()
+                    .insert(tgt_id, weight_val);
+                modified_verts.insert(tgt_v_idx_i64);
             }
-
-            let weight_val = *vw.get(&src_id).unwrap();
-            if weight_val < 0.0001 {
-                continue;
-            }
-
-            let coord = vertex_coords[v_idx as usize];
-
-            if is_target_side(coord, axis_idx, &direction) {
-                continue;
-            }
-
-            let flipped = flip_coord(coord, axis_idx);
-            let (tgt_v_idx, dist) = find_nearest(flipped, &vertex_coords);
-            let tgt_v_idx_i64 = tgt_v_idx as i64;
-
-            if dist >= KD_TREE_TOLERANCE {
-                continue;
-            }
-
-            layer_dict
-                .entry(tgt_v_idx_i64)
-                .or_default()
-                .insert(tgt_id, weight_val);
-            modified_verts.insert(tgt_v_idx_i64);
         }
     }
 
@@ -360,7 +401,32 @@ pub fn rust_mirror_apply(
         }
     }
 
-    Ok(layer_dict)
+    // ══════════════════════════════════════════════════════════════
+    // STEP 4 — GAP DETECTION
+    // ══════════════════════════════════════════════════════════════
+    // Any target-side vertex without weight on a mirrored bone after the
+    // pass above is a candidate gap. A vertex correctly holding only
+    // non-mirrored bone weight (e.g. a Spine bone) is also flagged here,
+    // but that's harmless: the Python-side BVH fallback pulls from the
+    // source's own weight data at that location, which is legitimately
+    // empty for the mirrored bones there too, so the fallback contributes
+    // nothing and the vertex is left untouched.
+    let mut gaps: Vec<i64> = Vec::new();
+    for v_idx in 0..total_verts {
+        if !is_target(v_idx) {
+            continue;
+        }
+        let v_idx_i64 = v_idx as i64;
+        let has_pair_weight = layer_dict
+            .get(&v_idx_i64)
+            .map(|vw| vw.keys().any(|b| tgt_bone_ids.contains(b)))
+            .unwrap_or(false);
+        if !has_pair_weight {
+            gaps.push(v_idx_i64);
+        }
+    }
+
+    Ok((layer_dict, gaps))
 }
 
 /// Mirror of Python `mirror_logic.apply_mask()`

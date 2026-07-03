@@ -195,7 +195,7 @@ class OBJECT_OT_mw_copy_skin_weight_maya(bpy.types.Operator):
                 name = m.get("name") or f"Layer {idx}"
                 mask_default = float(m.get("mask_default", 1.0))
                 facade.switch_to_layer(idx, push_undo=False)
-                layers.append((name, facade.get_active_layer_dict(), facade.get_active_mask_dict(), mask_default))
+                layers.append((name, facade.read_active_layer(), facade.get_active_mask_dict(), mask_default))
 
             if prev_layer_idx is not None and prev_layer_idx >= 0:
                 facade.switch_to_layer(prev_layer_idx, push_undo=False)

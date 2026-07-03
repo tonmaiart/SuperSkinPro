@@ -27,7 +27,10 @@ def _on_changed(self, context):
     if not getattr(context, 'active_object', None):
         return
     from ...core.facade import CoreFacade
-    CoreFacade(context).invalidate_color_only()
+    try:
+        CoreFacade(context).invalidate_color_only()
+    except ValueError:
+        pass  # Not activated -- nothing to redraw, the sidebar panel is hidden anyway.
     CoreFacade.save_prefs()
 
 

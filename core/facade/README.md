@@ -20,6 +20,7 @@ The current architecture is `Blender Operator → CoreFacade → FeatureDomain`.
 ### `get_active_layer_dict() -> dict`
 - **Description:** Retrieves the weight data of the currently active layer.
 - **Returns:** `{ v_idx (int): { bone_name (str): weight (float) } }`
+- **⚠️ NOT mode-aware.** Reads `ss_layer_N` directly — in Edit Mode with `__ssp_*` temp VGs present this is the Edit-Mode-entry snapshot, not the live BMesh state. Use `read_active_layer()` for any code path reachable in Edit Mode. See `docs/bug-history/0019`.
 
 ### `get_active_mask_dict() -> dict`
 - **Description:** Retrieves the mask/coverage data of the currently active layer.
@@ -91,6 +92,19 @@ Both sub-steps happen inside the same Python call (`write_active_layer()` perfor
 - **Requires:** `read_active_layer()` should have been called first on this instance so the bone mapping cache is populated.
 - **Mask note:** This method writes weight data only. It calls the internal write path with no mask payload (`None`) — it must never be passed an empty dict `{}` in place of "no mask data," since the underlying Edit-Mode writer treats `{}` as "the mask is now empty everywhere" and clears it. See `docs/bug-history/0020`.
 
+### `mutate_active_layer(*, color_only: bool = True) -> contextmanager`
+- **Description:** Read-modify-write transaction for the active layer's weight data. `with facade.mutate_active_layer() as layer_data:` yields the dict from `read_active_layer()` for in-place mutation; on a clean exit it commits via `write_active_layer()` (mode-aware write + `finish()`). On an exception inside the block, nothing is written.
+- **Usage:** Preferred over manually pairing `read_active_layer()` + `write_active_layer()` — makes the read-before-write ordering structurally guaranteed instead of relying on the caller to remember it. It is a thin composition of those two methods, not separate logic, so it never drifts out of sync with orphan/mask handling changes made to either.
+- **⚠️ Must mutate `layer_data` in place** (`layer_data[v_idx][bone] = w`), never rebind the local name to a new dict (`layer_data = some_new_dict`). The generator holds the object reference from the original `yield`; rebinding the caller's local only changes what the caller's own code sees, not what gets committed on exit — the write would silently use the pre-mutation state. Code that computes a wholesale replacement dict (e.g. via `normalize_weights()`, which returns a new dict rather than mutating its argument) should call `read_active_layer()` / `write_active_layer()` directly instead of this wrapper.
+- **Example:**
+  ```python
+  with facade.mutate_active_layer() as layer_data:
+      for v_idx in facade.get_selected_verts():
+          if v_idx in layer_data:
+              for bone in layer_data[v_idx]:
+                  layer_data[v_idx][bone] *= 1.1
+  ```
+
 ### `get_unified_mapping() -> tuple[dict[str, int], dict[int, str]]`
 - **Description:** Returns `(bone_to_id, id_to_bone)` including synthetic IDs for orphan bones. Reuses the mapping cached by `read_active_layer()` if already called on this instance.
 - **Usage:** Required by Rust domains that convert the string-keyed result of `read_active_layer()` to int-keyed data for FFI calls.
@@ -108,6 +122,7 @@ Both sub-steps happen inside the same Python call (`write_active_layer()` perfor
 ### `write_layer_dict(layer_dict: dict)`
 - **Description:** Commits a nested weight dictionary back to the active layer slot.
 - **Input Format:** `{ v_idx (int): { bone_name (str): weight (float) } }`
+- **⚠️ NOT mode-aware.** Writes `ss_layer_N` directly — in Edit Mode with `__ssp_*` temp VGs present this write is invisible to the live BMesh state and gets overwritten on Exit Edit Mode / layer switch. Use `write_active_layer()` or `mutate_active_layer()` for any code path reachable in Edit Mode. See `docs/bug-history/0019`. A debug-log warning fires automatically (category `core_pipeline`) if this is called while in Edit Mode with temp VGs present.
 
 ### `write_mask_dict(mask_dict: dict)`
 - **Description:** Commits a mask dictionary back to the active layer mask slot.

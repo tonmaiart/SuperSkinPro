@@ -17,7 +17,23 @@ class ReadFacadeMixin:
     """Mixin providing read-only access to layer, mesh, and bone state."""
 
     def get_active_layer_dict(self) -> dict:
-        """Return active layer weight dict {v_idx: {bone_name: weight}}."""
+        """Return active layer weight dict {v_idx: {bone_name: weight}}.
+
+        Reads ss_layer_N directly — NOT mode-aware. In Edit Mode with
+        __ssp_* temp VGs present, this returns the Edit-Mode-entry snapshot,
+        not the live BMesh state. Use read_active_layer() instead for any
+        code path reachable while the mesh may be in Edit Mode
+        (see docs/bug-history/0019 and docs/core-interfaces/edit_mode_weight_write_pattern.md).
+        """
+        from ..layer_storage.temp_vg_bridge import has_temp_vgs
+        if self.obj.mode == 'EDIT' and has_temp_vgs(self.obj):
+            from ...core_subsystems.debug_logging import DebugLogService
+            DebugLogService.log(
+                "core_pipeline",
+                "get_active_layer_dict(): called in EDIT mode with temp VGs present -- "
+                "this reads ss_layer_N (Edit-Mode-entry snapshot), not the live BMesh "
+                "state. Likely wrong; use read_active_layer() instead.",
+            )
         return self.storage.read_active_layer_dict()
 
     def get_active_mask_dict(self) -> dict:

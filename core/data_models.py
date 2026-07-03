@@ -23,9 +23,6 @@ class SuperSkinAdvancedSettings(bpy.types.PropertyGroup):
              "longer matches a vertex group), hiding every real "
              "vertex-group row",
              'ERROR', 2),
-            ('MASK', "Filter Mask",
-             "Show only the layer mask row, hiding every bone/orphan row",
-             'MOD_MASK', 3),
         ],
         default='NONE',
     )

@@ -12,13 +12,17 @@ No bpy import -- operates on plain strings and booleans.
 """
 
 from ..rust_weight_engine import RustWeightEngine
-from ..preferences.preferences_service import PreferencesService
+
+# PreferencesService is deliberately NOT hoisted here. core_subsystems/__init__.py
+# reloads license_gateway before preferences (see that file's module list), so
+# a module-level import here would bind to the pre-reload PreferencesService
+# class -- a different object than the one load()/save_to_user_file() actually
+# operate on, which silently defeats the `_loading` reentrancy guard. Every
+# call site below imports it fresh instead. See docs/bug-history for the
+# write-up this class of bug was diagnosed from.
 
 # This product's Gumroad API requires product_id (not product_permalink).
 GUMROAD_PRODUCT_ID = "SNwmonGFn_waEKPkW369ZA=="
-
-# Free-tier cap. Pro activation sets this to None (unlimited).
-FREE_LAYER_LIMIT = 6
 
 
 class LicenseGateway:
@@ -36,6 +40,7 @@ class LicenseGateway:
             ``(success, message)`` for the calling operator to report.
         """
         success, message, token = cls._verify_license(license_key)
+        from ..preferences.preferences_service import PreferencesService
         PreferencesService.set_license_activation(license_key, token, message)
         return success, message
 
@@ -72,19 +77,17 @@ class LicenseGateway:
         Always re-derives the signature via Rust rather than trusting a stored
         boolean -- see SSPrefLicense docstring for why.
         """
+        from ..preferences.preferences_service import PreferencesService
         key = PreferencesService.get_license_key()
         token = PreferencesService.get_activation_token()
         return cls.check_cached_activation(key, token)
 
     @classmethod
-    def layer_limit(cls):
-        """Return the max layer count for the current tier, or None if unlimited."""
-        return None if cls.is_pro() else FREE_LAYER_LIMIT
-
-    @classmethod
     def get_license_key(cls) -> str:
+        from ..preferences.preferences_service import PreferencesService
         return PreferencesService.get_license_key()
 
     @classmethod
     def get_activation_token(cls) -> str:
+        from ..preferences.preferences_service import PreferencesService
         return PreferencesService.get_activation_token()

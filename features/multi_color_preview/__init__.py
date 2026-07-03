@@ -18,10 +18,11 @@ def register():
     multi_color_preview_feature.register()
     ops.register()
     keymap.register()
+    draw.register()
 
 
 def unregister():
     keymap.unregister()
-    draw.cleanup()
+    draw.unregister()
     ops.unregister()
     multi_color_preview_feature.unregister()

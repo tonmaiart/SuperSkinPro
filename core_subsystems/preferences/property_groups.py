@@ -11,25 +11,37 @@ import bpy
 # Hoisted from update callbacks — converted from absolute 'SuperSkinPro.*'
 # imports to relative imports for Blender Extensions Platform compatibility.
 from ...core.shaders.shader_manager import ShaderManager
-from .preferences_service import PreferencesService
 
+# PreferencesService is deliberately NOT hoisted (unlike ShaderManager above).
+# This file is reloaded *before* preferences_service.py in this package's own
+# __init__.py reload loop (`for mod in (io, property_groups,
+# preferences_service): reload(mod)`), so a module-level `from
+# .preferences_service import PreferencesService` here would bind to the
+# pre-reload class, permanently disconnected from the one `load()` sets
+# `_loading` on — silently breaking the load()/save_to_user_file() reentrancy
+# guard for every update= callback in this file, letting a mid-populate save
+# write a torn snapshot over another extension's already-correct data. See
+# docs/bug-history for the mirror-keywords-persistence report this was
+# diagnosed from. Importing inside each callback instead resolves the name
+# at call time, after all reload cascades have finished.
+#
 # New, intentional one-way exception to sibling-subsystem isolation (alongside
-# the ShaderManager and PreferencesService exceptions already used in this
-# file): `preferences` nests SSPrefDebug into SSPrefRoot.debug so the
-# "Developer / Debug Tools" panel has a single PropertyGroup root to draw
-# from, the same way license/customize settings are nested here rather than
-# living as their own top-level WindowManager properties.
+# the ShaderManager exception already used in this file): `preferences` nests
+# SSPrefDebug into SSPrefRoot.debug so the "Developer / Debug Tools" panel has
+# a single PropertyGroup root to draw from, the same way license/customize
+# settings are nested here rather than living as their own top-level
+# WindowManager properties.
 from ..debug_logging.property_groups import SSPrefDebug
 
 
 def _on_license_field_changed(self, context):
-    # Hoisted import: PreferencesService.
+    from .preferences_service import PreferencesService
     PreferencesService.save_to_user_file()
 
 
 def _on_visual_pref_changed(self, context):
-    # Hoisted imports: ShaderManager, PreferencesService.
     ShaderManager().invalidate_color_only()
+    from .preferences_service import PreferencesService
     PreferencesService.save_to_user_file()
 
 

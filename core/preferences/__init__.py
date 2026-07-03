@@ -7,8 +7,21 @@ because they depend on core/layer_storage.
 
 import bpy
 
-from ...core_subsystems.preferences import PreferencesService
 from ...core_subsystems.preferences import property_groups
+
+# PreferencesService is deliberately NOT imported at module scope here.
+# core.preferences (this package) is reloaded as part of core/__init__.py's
+# own cascade, which can run before or interleave with core_subsystems'
+# cascade reloading core_subsystems.preferences.preferences_service depending
+# on which package's chain of `from X import Y` statements triggers the
+# other's first import — a module-level binding here can end up pointing at
+# a PreferencesService class that's a different object identity than the one
+# still-executing code elsewhere resolves to, which silently breaks the
+# `_loading` reentrancy guard (each class has its own independent `_loading`
+# attribute) and produces exactly the kind of torn mid-populate write that
+# guard exists to prevent — see docs/bug-history for the mirror-keywords
+# persistence report this was diagnosed from. Importing inside the handler
+# instead resolves the name at call time, after all reload cascades settle.
 
 
 @bpy.app.handlers.persistent
@@ -21,6 +34,7 @@ def _superskin_prefs_load_handler(dummy):
     would silently blank out the user's customized Preferences until the addon
     is disabled and re-enabled.
     """
+    from ...core_subsystems.preferences import PreferencesService
     PreferencesService.load()
     _recover_orphaned_temp_vgs()
 

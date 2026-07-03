@@ -77,6 +77,13 @@ def _enter_edit_mode(op, context):
     (see OBJECT_OT_mw_toggle_edit_mode, which calls this function directly
     instead of going through bpy.ops for exactly this reason).
     """
+    CoreFacade.debug_log(
+        "temp_vg",
+        f"_enter_edit_mode() ENTRY: active_object={getattr(context.active_object, 'name', None)!r} "
+        f"active_object.type={getattr(context.active_object, 'type', None)!r} "
+        f"active_object.mode={getattr(context.active_object, 'mode', None)!r}",
+    )
+
     target_mesh = None
     obj = context.active_object
 
@@ -110,10 +117,18 @@ def _enter_edit_mode(op, context):
                     context.scene["mw_last_active_armature"] = armature.name
 
     if not target_mesh:
+        CoreFacade.debug_log("temp_vg", "_enter_edit_mode() ABORT: no target_mesh resolved")
         op.report({'ERROR'}, "No Mesh or Armature found to enter Edit Mode.")
         return {'CANCELLED'}
 
+    CoreFacade.debug_log("temp_vg", f"_enter_edit_mode() target_mesh={target_mesh.name!r}")
+
     if not any(mod.type == 'ARMATURE' and mod.object for mod in target_mesh.modifiers):
+        CoreFacade.debug_log(
+            "temp_vg",
+            f"_enter_edit_mode() ABORT: {target_mesh.name!r} has no Armature modifier with "
+            f"an assigned object — modifiers={[(m.type, getattr(m, 'object', None)) for m in target_mesh.modifiers]!r}",
+        )
         op.report({'WARNING'}, "This mesh has no Armature deformer.")
         return {'CANCELLED'}
 
@@ -130,6 +145,11 @@ def _enter_edit_mode(op, context):
         target_mesh.select_set(True)
         # Verify the assignment took effect
         if context.active_object != target_mesh:
+            CoreFacade.debug_log(
+                "temp_vg",
+                f"_enter_edit_mode() ABORT: could not make {target_mesh.name!r} the active "
+                f"object — context.active_object is now {getattr(context.active_object, 'name', None)!r}",
+            )
             op.report({'ERROR'}, f"Cannot set '{target_mesh.name}' as active object (it may be on a hidden collection or linked).")
             return {'CANCELLED'}
 
@@ -142,8 +162,9 @@ def _enter_edit_mode(op, context):
 
     # ── Auto-heal layer storage for topology changes ────────────
     try:
-        CoreFacade(context).get_ctrl().heal_topology_if_needed()
-    except Exception:
+        CoreFacade(context).heal_topology_if_needed()
+    except Exception as exc:
+        CoreFacade.debug_log("temp_vg", f"_enter_edit_mode() heal_topology_if_needed() raised: {exc!r}")
         pass  # non‑critical — the user can still paint
 
     # Orphan-bone *visibility* in the Deform Bones list no longer depends
@@ -160,14 +181,18 @@ def _enter_edit_mode(op, context):
     # targets; it's not required for orphan rows to appear at all.
     try:
         BoneIdentityService(context).backfill_and_scan()
-    except Exception:
+    except Exception as exc:
+        CoreFacade.debug_log("temp_vg", f"_enter_edit_mode() backfill_and_scan() raised: {exc!r}")
         pass  # graceful — the UUID-backed rename suggestion is optional
 
     if obj.mode != 'EDIT':
         if context.active_object is None:
+            CoreFacade.debug_log("temp_vg", "_enter_edit_mode() ABORT: active_object is None before first mode_set(EDIT)")
             op.report({'ERROR'}, "No active object – cannot enter Edit Mode.")
             return {'CANCELLED'}
+        CoreFacade.debug_log("temp_vg", f"_enter_edit_mode() calling mode_set(EDIT) from mode={obj.mode!r}")
         bpy.ops.object.mode_set(mode='EDIT')
+        CoreFacade.debug_log("temp_vg", f"_enter_edit_mode() after first mode_set(EDIT): obj.mode={obj.mode!r}")
 
     # Load active layer into temp VGs for native BMesh undo tracking.
     # Guard the OBJECT bounce so the auto-save handler does not schedule a
@@ -175,43 +200,112 @@ def _enter_edit_mode(op, context):
     _was_suppressing = context.scene.superskin_internal_transaction
     context.scene.superskin_internal_transaction = True
     try:
+        CoreFacade.debug_log("temp_vg", "_enter_edit_mode() temp-VG load bounce: mode_set(OBJECT)")
         bpy.ops.object.mode_set(mode='OBJECT')
         _load_active_layer_to_temp_vgs(obj, context)
+        CoreFacade.debug_log("temp_vg", "_enter_edit_mode() temp-VG load bounce: mode_set(EDIT)")
         bpy.ops.object.mode_set(mode='EDIT')
+    except Exception as exc:
+        CoreFacade.debug_log("temp_vg", f"_enter_edit_mode() temp-VG load bounce RAISED: {exc!r}")
+        raise
     finally:
         context.scene.superskin_internal_transaction = _was_suppressing
+        CoreFacade.debug_log("temp_vg", f"_enter_edit_mode() after temp-VG load bounce: obj.mode={obj.mode!r}")
 
     bpy.ops.mesh.select_mode(type='VERT')
 
     saved = context.scene.get(f"mw_saved_selection_{obj.name}", [])
     if saved:
         if context.active_object is None:
+            CoreFacade.debug_log("temp_vg", "_enter_edit_mode() ABORT: active_object is None while restoring saved selection")
             op.report({'ERROR'}, "Lost active object while restoring selection.")
             return {'CANCELLED'}
-        bpy.ops.object.mode_set(mode='OBJECT')
-        for v in obj.data.vertices:
-            v.select = v.index in saved
-        bpy.ops.object.mode_set(mode='EDIT')
+        # Same guard as the temp-VG load bounce above, and for the same
+        # reason: this OBJECT->EDIT round trip is purely internal
+        # bookkeeping, not a real "user left Edit Mode" event. Without
+        # suppressing it, _superskin_auto_save_guard's depsgraph handler
+        # sees the mode_set('OBJECT') below as an unguarded EDIT_MESH exit
+        # (has_temp_vgs(obj) is already True by this point) and schedules
+        # its own async auto-save round trip, which lands back in Object
+        # Mode shortly after this operator returns — see the mode-bounce
+        # regression this was diagnosed from (obj.mode read 'EDIT' at this
+        # function's own completion log but 'OBJECT' moments later at the
+        # deferred active-bone sync).
+        _was_suppressing_sel = context.scene.superskin_internal_transaction
+        context.scene.superskin_internal_transaction = True
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+            for v in obj.data.vertices:
+                v.select = v.index in saved
+            bpy.ops.object.mode_set(mode='EDIT')
+        finally:
+            context.scene.superskin_internal_transaction = _was_suppressing_sel
 
-    overlay = context.space_data.overlay
-    overlay.show_weight = True
-    overlay.show_edge_bevel_weight = False
-    overlay.show_edge_crease = False
-    overlay.show_edge_seams = False
-    overlay.show_edge_sharp = False
-    overlay.show_faces = False
-    if hasattr(overlay, "show_vertex_group_weights"):
-        overlay.show_vertex_group_weights = True
+    # context.space_data can be None (F3 search from a non-3D-viewport area,
+    # automation/headless invocation) — see the matching guard and note in
+    # _exit_edit_mode. Skip the cosmetic overlay setup rather than crashing
+    # the whole Enter Edit Mode sequence after the real work above already
+    # succeeded.
+    space_data = context.space_data
+    if space_data is not None and hasattr(space_data, "overlay"):
+        overlay = space_data.overlay
+        overlay.show_weight = True
+        overlay.show_edge_bevel_weight = False
+        overlay.show_edge_crease = False
+        overlay.show_edge_seams = False
+        overlay.show_edge_sharp = False
+        overlay.show_faces = False
+        if hasattr(overlay, "show_vertex_group_weights"):
+            overlay.show_vertex_group_weights = True
 
     bpy.ops.wm.tool_set_by_id(name="builtin.select_circle")
 
     _save_and_set_gray()
 
+    # Which visualizer to show right now is read directly off
+    # storage.active_is_mask (the actual source of truth — see
+    # apply_active_bone()'s own docstring) rather than through
+    # scene.superskin_is_mask_mode, since the full sync below is deferred.
+    is_mask = bool(obj.superskin_storage.active_is_mask)
+
+    # Defer the native active-VG pointer sync (storage.last_clicked_index /
+    # active_is_mask -> obj.vertex_groups.active_index) instead of calling
+    # CoreFacade.apply_active_bone() here inline. That write is a genuine
+    # Object-ID mutation, so it lands in the next depsgraph_update_post pass
+    # and triggers _superskin_layers_depsgraph_handler's full
+    # sync_bones_to_ui_collection() rebuild of the whole Deform Bones mirror
+    # collection — on a rig with many bones, doing that synchronously here
+    # (stacked on top of heal_topology_if_needed()/backfill_and_scan() a few
+    # lines up, which can trigger the same rebuild) was enough added latency
+    # that "Edit Layer Weight" looked like it had stopped responding, unlike
+    # Tab (which enters native Edit Mode with none of this addon-side setup
+    # at all — see docs/bug-history for why that isn't actually the same
+    # code path and can't regress this way). A row click already does this
+    # exact push via BoneListAdapter.on_single_select() with the same
+    # deferral not needed there since it isn't stacked on everything else
+    # Entering Edit Mode already does.
+    def _sync_active_bone_deferred():
+        _ctx = bpy.context
+        if _ctx and _ctx.active_object == obj and obj.mode == 'EDIT':
+            try:
+                CoreFacade(_ctx).apply_active_bone()
+                CoreFacade.debug_log("temp_vg", f"_enter_edit_mode() deferred apply_active_bone() done for {obj.name!r}")
+            except Exception as exc:
+                CoreFacade.debug_log("temp_vg", f"_enter_edit_mode() deferred apply_active_bone() raised: {exc!r}")
+        else:
+            CoreFacade.debug_log(
+                "temp_vg",
+                f"_enter_edit_mode() deferred sync skipped: active_object="
+                f"{getattr(_ctx.active_object, 'name', None) if _ctx else None!r} obj={obj.name!r} "
+                f"obj.mode={obj.mode!r}",
+            )
+        return None
+    bpy.app.timers.register(_sync_active_bone_deferred, first_interval=0.0)
+
     # Auto-enable the custom weight visualizer (mask-row-aware)
-    is_mask = getattr(context.scene, "superskin_is_mask_mode", False)
     viz_mode = 'MASK' if is_mask else 'SINGLE'
     try:
-        CoreFacade(context).get_ctrl().set_visualizer_mode(viz_mode)
+        CoreFacade(context).set_visualizer_mode(viz_mode)
     except Exception:
         pass  # graceful — visualizer is optional
 
@@ -224,6 +318,8 @@ def _enter_edit_mode(op, context):
         _utils.force_open_super_skin_tab()
     except Exception:
         pass
+
+    CoreFacade.debug_log("temp_vg", f"_enter_edit_mode() COMPLETE: obj={obj.name!r} obj.mode={obj.mode!r} viz_mode={viz_mode!r}")
 
     return {'FINISHED'}
 
@@ -257,7 +353,7 @@ def _exit_edit_mode(op, context, *, keep_panel_open: bool = False):
 
     # Clean up the custom visualizer before leaving edit mode.
     try:
-        CoreFacade(context).get_ctrl().set_visualizer_mode('CLEAR')
+        CoreFacade(context).set_visualizer_mode('CLEAR')
     except Exception:
         pass
 
@@ -286,15 +382,24 @@ def _exit_edit_mode(op, context, *, keep_panel_open: bool = False):
             context.scene[f"mw_last_mesh_{mod.object.name}"] = obj.name
             context.scene["mw_last_active_armature"] = mod.object.name
 
-    overlay = context.space_data.overlay
-    overlay.show_weight = False
-    overlay.show_edge_bevel_weight = True
-    overlay.show_edge_crease = True
-    overlay.show_edge_seams = True
-    overlay.show_edge_sharp = True
-    overlay.show_faces = True
-    if hasattr(overlay, "show_vertex_group_weights"):
-        overlay.show_vertex_group_weights = False
+    # context.space_data can be None here — e.g. invoked via F3 search from
+    # a non-3D-viewport area, from a script/automation context, or (as
+    # found while consolidating the "Save Weight and Exit" button onto this
+    # shared path) headless/background execution. The overlay reset is a
+    # viewport cosmetic, not part of the actual save — skip it rather than
+    # letting the whole bake+exit sequence raise after the real work above
+    # has already completed successfully.
+    space_data = context.space_data
+    if space_data is not None and hasattr(space_data, "overlay"):
+        overlay = space_data.overlay
+        overlay.show_weight = False
+        overlay.show_edge_bevel_weight = True
+        overlay.show_edge_crease = True
+        overlay.show_edge_seams = True
+        overlay.show_edge_sharp = True
+        overlay.show_faces = True
+        if hasattr(overlay, "show_vertex_group_weights"):
+            overlay.show_vertex_group_weights = False
 
     if not keep_panel_open:
         _utils.force_close_tab()
@@ -442,7 +547,7 @@ class SUPERSKIN_OT_enter_layer_edit(bpy.types.Operator):
         obj = context.active_object
         if obj and obj.type == 'MESH' and "ss_layers_meta" not in obj.data:
             try:
-                CoreFacade(context).get_ctrl().init_layer_system()
+                CoreFacade(context).init_layer_system()
             except Exception as exc:
                 self.report({'ERROR'}, f"Layer system init failed: {exc}")
                 return {'CANCELLED'}
@@ -512,6 +617,19 @@ def _schedule_auto_save(obj_name: str) -> None:
     mesh.vertices when Tab is pressed, so re-entering Edit Mode in the timer
     creates a fresh BMesh with the correct weights — making read_temp_vgs_from_bm
     reliable even though the user has already exited.
+
+    Deliberately does NOT call `_exit_edit_mode()` (the shared body used by
+    SUPERSKIN_OT_save_weights / OBJECT_OT_mw_exit_edit_mode / the "Save
+    Weight and Exit" button) even though the bake step itself
+    (`_bake_temp_vgs_on_exit`) is shared. `_exit_edit_mode()` reads
+    `context.space_data.overlay` unguarded, which is fine inside a normal
+    operator `execute()` (always has full UI context) but is not reliably
+    populated inside a `bpy.app.timers` callback — timers run outside the
+    UI event loop and `bpy.context` there can have `area`/`region`/
+    `space_data` as None. This function intentionally only reuses the parts
+    that are safe here (the bake, visualizer clear, deform-overlay hide,
+    temp VG deletion) and skips the space_data-dependent overlay-settings
+    reset and Tab/selection-cache bookkeeping that a button click can rely on.
     """
     def _do_auto_save():
         _ctx = bpy.context
@@ -538,7 +656,7 @@ def _schedule_auto_save(obj_name: str) -> None:
             bpy.ops.object.mode_set(mode='EDIT')
             _bake_temp_vgs_on_exit(_obj)
             try:
-                CoreFacade(_ctx).get_ctrl().set_visualizer_mode('CLEAR')
+                CoreFacade(_ctx).set_visualizer_mode('CLEAR')
             except Exception:
                 pass
             try:

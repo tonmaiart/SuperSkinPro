@@ -63,6 +63,28 @@ class SSPrefMirror(bpy.types.PropertyGroup):
         default=True,
         update=_on_changed,
     )
+    fill_gaps: bpy.props.BoolProperty(
+        name="Auto-Fill Gaps",
+        description=(
+            "When the nearest-vertex mirror pass can't find a matching vertex "
+            "within tolerance (asymmetric topology), fill the gap using a "
+            "closest-point-on-surface + barycentric blend, same approach as "
+            "Weight Transfer, instead of leaving it unweighted"
+        ),
+        default=True,
+        update=_on_changed,
+    )
+    warn_self_intersection: bpy.props.BoolProperty(
+        name="Warn on Self-Intersection",
+        description=(
+            "Before mirroring, check whether the mesh's own geometry already "
+            "crosses the mirror plane into where its mirrored copy will sit "
+            "(e.g. an oversized pant leg) and show a warning. Detection only "
+            "— never blocks or alters the mirror"
+        ),
+        default=True,
+        update=_on_changed,
+    )
     search_replace_pairs:  bpy.props.CollectionProperty(type=SSPrefMirrorSRItem)
     search_replace_index:  bpy.props.IntProperty(name="Index", default=0)
 
@@ -91,6 +113,14 @@ class MirrorPreferencesService:
         return cls._prefs().both_data
 
     @classmethod
+    def get_mirror_fill_gaps(cls) -> bool:
+        return cls._prefs().fill_gaps
+
+    @classmethod
+    def get_mirror_warn_self_intersection(cls) -> bool:
+        return cls._prefs().warn_self_intersection
+
+    @classmethod
     def get_mirror_search_replace_pairs(cls) -> list:
         return [(p.search_text, p.replace_text) for p in cls._prefs().search_replace_pairs]
 
@@ -109,7 +139,8 @@ class MirrorFeature(UnifiedFeatureExtension):
     section_title = "Mirror"
     draw_tab = "SKINNING"
     defaults_path = _DEFAULTS_PATH
-
+    priority = 3
+    
     # ── Action dispatch ───────────────────────────────────────────────────
 
     def execute(self, action: str, context, core_facade: CoreFacade) -> dict:
@@ -134,6 +165,8 @@ class MirrorFeature(UnifiedFeatureExtension):
         row_axis.label(text="Mirror Axis:")
         row_axis.prop(mirror, "mirror_axis", text="")
         layout.prop(mirror, "both_data", toggle=False)
+        layout.prop(mirror, "fill_gaps", toggle=False)
+        layout.prop(mirror, "warn_self_intersection", toggle=False)
         layout.label(text="Mapping Keywords:")
         self._draw_sr_body(layout.box(), context, mirror)
         row_btn = layout.row()
@@ -171,6 +204,8 @@ class MirrorFeature(UnifiedFeatureExtension):
         mirror.mirror_axis = data.get("mirror_axis", "X")
         mirror.direction   = data.get("direction",   "POS_NEG")
         mirror.both_data   = data.get("both_data",   True)
+        mirror.fill_gaps   = data.get("fill_gaps",   True)
+        mirror.warn_self_intersection = data.get("warn_self_intersection", True)
 
         sr_coll = mirror.search_replace_pairs
         sr_coll.clear()
@@ -186,6 +221,8 @@ class MirrorFeature(UnifiedFeatureExtension):
             "mirror_axis": mirror.mirror_axis,
             "direction":   mirror.direction,
             "both_data":   mirror.both_data,
+            "fill_gaps":   mirror.fill_gaps,
+            "warn_self_intersection": mirror.warn_self_intersection,
             "search_replace_pairs": [
                 [p.search_text, p.replace_text]
                 for p in mirror.search_replace_pairs

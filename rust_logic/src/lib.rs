@@ -229,12 +229,13 @@ fn rust_mirror_apply(
     id_pairs: HashMap<i32, i32>,
     vertex_groups_lock: HashMap<i32, bool>,
     vertex_coords: Vec<(f64, f64, f64)>,
+    target_side_mask: Vec<bool>,
     axis: String,
     direction: String,
-) -> PyResult<HashMap<i64, HashMap<i32, f64>>> {
+) -> PyResult<(HashMap<i64, HashMap<i32, f64>>, Vec<i64>)> {
     mirror_logic::rust_mirror_apply(
         layer_dict, id_pairs, vertex_groups_lock,
-        vertex_coords, axis, direction,
+        vertex_coords, target_side_mask, axis, direction,
     )
 }
 
@@ -265,11 +266,12 @@ fn rust_get_visible_influence_bones(
 fn rust_mirror_apply_mask_flat(
     mask_weights: Vec<f64>,
     vertex_coords: Vec<(f64, f64, f64)>,
+    target_side_mask: Vec<bool>,
     axis: String,
     direction: String,
-) -> PyResult<Vec<f64>> {
+) -> PyResult<(Vec<f64>, Vec<i64>)> {
     Ok(flat_bridge::flat_mirror_apply_mask(
-        mask_weights, &vertex_coords, &axis, &direction,
+        mask_weights, &vertex_coords, &target_side_mask, &axis, &direction,
     ))
 }
 

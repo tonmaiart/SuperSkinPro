@@ -6,6 +6,7 @@ canonical shared/list_widget/ package.
 """
 
 import bpy
+import time
 
 from ...interface.template_ui import (
     SuperSkinListMixin,
@@ -103,7 +104,7 @@ class LayerListAdapter(ListSelectionAdapter):
         layer_index = int(key)
 
         from ...core.facade import CoreFacade
-        ctrl = CoreFacade(context).get_ctrl()
+        ctrl = CoreFacade(context)
 
         context.scene.superskin_internal_transaction = True
         try:
@@ -126,6 +127,17 @@ class LayerListAdapter(ListSelectionAdapter):
 # equivalent guard in the original widget_tools.py).
 _layer_select_busy = False
 
+# Double-click-to-rename detection. Blender does not reliably deliver
+# event.value == 'DOUBLE_CLICK' to a plain operator invoked by a UI button
+# click (that value is only meaningful inside a running modal's own event
+# loop) — so double-click is detected manually here by comparing the click
+# timestamp and row key against the previous click, the same technique used
+# by other Blender addons that need double-click on a custom (non-native)
+# list row.
+_last_click_time = 0.0
+_last_click_key = None
+_DOUBLE_CLICK_THRESHOLD = 0.35  # seconds
+
 
 class SUPERSKIN_OT_layer_select_by_item(bpy.types.Operator):
     """Select (and optionally multi-select) a layer row in the Layers list.
@@ -141,7 +153,7 @@ class SUPERSKIN_OT_layer_select_by_item(bpy.types.Operator):
     layer_index: bpy.props.IntProperty(name="Layer Slot Index")
 
     def invoke(self, context, event):
-        global _layer_select_busy
+        global _layer_select_busy, _last_click_time, _last_click_key
         if _layer_select_busy:
             return {'CANCELLED'}
         obj = context.active_object
@@ -149,6 +161,16 @@ class SUPERSKIN_OT_layer_select_by_item(bpy.types.Operator):
             return {'CANCELLED'}
 
         item_key = str(self.layer_index)
+
+        now = time.time()
+        is_double_click = (
+            item_key == _last_click_key
+            and (now - _last_click_time) < _DOUBLE_CLICK_THRESHOLD
+            and not event.ctrl and not event.shift and not event.alt
+        )
+        _last_click_time = now
+        _last_click_key = item_key
+
         _layer_select_busy = True
         was_suppressing = context.scene.superskin_internal_transaction
         try:
@@ -167,6 +189,14 @@ class SUPERSKIN_OT_layer_select_by_item(bpy.types.Operator):
         for window in context.window_manager.windows:
             for area in window.screen.areas:
                 area.tag_redraw()
+
+        # Double-click-to-rename: the row is already active from the
+        # selection resolution above, so just pop the existing rename dialog
+        # on top of it — no separate rename/persistence path needed.
+        if is_double_click:
+            _last_click_time = 0.0  # don't let a 3rd quick click chain into another rename
+            bpy.ops.superskin.layer_rename_active('INVOKE_DEFAULT')
+
         return {'FINISHED'}
 
 
@@ -218,17 +248,17 @@ class SUPERSKIN_UL_layer_list_view(SuperSkinListMixin, bpy.types.UIList):
 # ==============================================================================
 
 class SUPERSKIN_MT_layer_rename_overflow(bpy.types.Menu):
-    """Overflow menu for secondary layer-list actions (rename, merge,
-    clipboard). bl_idname is unchanged — referenced by string from button_defs
-    and must not be renamed per AGENTS.md."""
+    """Overflow menu for secondary layer-list actions (merge, clipboard).
+    bl_idname is unchanged — referenced by string from button_defs and must
+    not be renamed per AGENTS.md. The "Rename Layer" entry was removed once
+    double-click-to-rename (see SUPERSKIN_OT_layer_select_by_item.invoke())
+    covered the same action — superskin.layer_rename_active itself is still
+    used by that double-click path, just no longer exposed here."""
     bl_label = "More"
     bl_idname = "SUPERSKIN_MT_layer_rename_overflow"
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("superskin.layer_rename_active",
-                        text="Rename Layer", icon='OUTLINER_DATA_FONT')
-        layout.separator()
         layout.operator("superskin.layer_merge_selected",
                         text="Merge Selected Layers", icon='AUTOMERGE_ON')
 

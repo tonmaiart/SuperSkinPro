@@ -15,7 +15,14 @@ _write_active_layer_string() for orphan-merge / temp-VG routing logic.
 
 _normalize_orphan_budget() and _purge_zeroed_orphans_from_all_layers() are
 module-level helpers used exclusively by _write_active_layer_string().
+
+mutate_active_layer() is a thin contextmanager composition of
+read_active_layer() + write_active_layer() — it does not duplicate their
+internals, so it can never drift out of sync with orphan/mask handling
+changes made to either. See docs/core-interfaces/edit_mode_weight_write_pattern.md.
 """
+
+from contextlib import contextmanager
 
 from ...core_subsystems.rust_weight_engine import RustWeightEngine
 from ...core_subsystems.debug_logging import DebugLogService
@@ -103,6 +110,23 @@ class WriteFacadeMixin:
     """Mixin providing write access to layer storage and flatten pipeline."""
 
     def write_layer_dict(self, layer_dict: dict):
+        """Commit a nested weight dict straight to ss_layer_N.
+
+        Not mode-aware. In Edit Mode with __ssp_* temp VGs present, this
+        write is invisible to the live BMesh state and gets clobbered by the
+        Exit-Edit-Mode bake-back (see docs/bug-history/0019). Use
+        write_active_layer() instead for any code path reachable while the
+        mesh may be in Edit Mode.
+        """
+        from ..layer_storage.temp_vg_bridge import has_temp_vgs
+        if self.obj.mode == 'EDIT' and has_temp_vgs(self.obj):
+            DebugLogService.log(
+                "core_pipeline",
+                "write_layer_dict(): called in EDIT mode with temp VGs present -- "
+                "this writes ss_layer_N directly, bypassing the temp VG bridge. "
+                "The write will be overwritten on Exit Edit Mode / layer switch. "
+                "Use write_active_layer() instead.",
+            )
         self.storage.write_layer_dict(self.active_layer_index, layer_dict)
 
     def write_mask_dict(self, mask_dict: dict):
@@ -184,6 +208,35 @@ class WriteFacadeMixin:
         )
         self._write_active_layer_string(result_int, self._id_to_bone, None, is_mask_mode=False)
         self.finish(color_only=color_only)
+
+    @contextmanager
+    def mutate_active_layer(self, *, color_only: bool = True):
+        """Read-modify-write transaction for the active layer's weight data.
+
+        Yields the string-keyed dict from read_active_layer() for in-place
+        mutation. On a clean exit, commits it via write_active_layer() (which
+        performs the mode-aware temp-VG/ss_layer_N write and calls finish()).
+        On an exception, nothing is written and the exception propagates.
+
+        This is a pure composition of read_active_layer() + write_active_layer()
+        — it exists to make the read-before-write ordering (required so the
+        bone mapping and orphan-entry caches are populated before the commit)
+        structurally hard to get wrong, not to introduce new write logic.
+
+        Args:
+            color_only: Passed through to write_active_layer()/finish().
+        """
+        layer_data = self.read_active_layer()
+        try:
+            yield layer_data
+        except Exception:
+            DebugLogService.log(
+                "core_pipeline",
+                "mutate_active_layer(): exception in block, write skipped",
+            )
+            raise
+        else:
+            self.write_active_layer(layer_data, color_only=color_only)
 
     def _write_active_layer_string(self, layer_int: dict, id_to_bone: dict,
                                     mask_dict: dict = None, *,

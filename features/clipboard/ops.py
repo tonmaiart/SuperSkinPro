@@ -71,7 +71,7 @@ class OBJECT_OT_ssp_clipboard_data_copy(bpy.types.Operator):
     def execute(self, context):
         from . import logic
         try:
-            logic.copy_data_manual(CoreFacade(context).get_ctrl(), action=self.action_type)
+            logic.copy_data_manual(CoreFacade(context), action=self.action_type)
         except ValueError as e:
             self.report({'WARNING'}, str(e))
             return {'CANCELLED'}
@@ -89,7 +89,7 @@ class OBJECT_OT_ssp_clipboard_data_paste(bpy.types.Operator):
         
         context.scene.superskin_internal_transaction = True
         try:
-            logic.paste_data_manual(CoreFacade(context).get_ctrl(), mode=prefs.paste_operation)
+            logic.paste_data_manual(CoreFacade(context), mode=prefs.paste_operation)
         except ValueError as e:
             self.report({'WARNING'}, str(e))
             return {'CANCELLED'}

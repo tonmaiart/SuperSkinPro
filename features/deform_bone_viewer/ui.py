@@ -36,11 +36,9 @@ def _extra_keep_predicate_impl(context, data, item, original_idx):
         return mode != 'ORPHAN'
 
     if getattr(item, 'is_orphan', False):
-        return mode != 'MASK'
+        return True
 
     if mode == 'ORPHAN':
-        return False
-    elif mode == 'MASK':
         return False
     elif mode == 'INFLUENCE':
         influenced_bones = _get_visible_influence_bones(context, data)
@@ -55,9 +53,12 @@ def _extra_keep_predicate_impl(context, data, item, original_idx):
 class _BoneListVisibilityHooks(SuperSkinListMixin):
     """Plain-Python twin of MESH_UL_influence_list_view's hooks, used only
     by BoneListAdapter.get_keys_in_visual_order() for off-draw-cycle
-    visibility computation. Orphan and mask rows are excluded here (unlike
-    the real UIList's own predicate), since they must never enter a
-    range-select span between two real bone rows."""
+    visibility computation. Orphan rows are excluded here (unlike the real
+    UIList's own predicate), since they must never enter a range-select
+    span between two real bone rows. The mask row IS included — it
+    participates in multi-select, range-select, and select-all like any
+    other row (see BoneListAdapter for how last_clicked_index/active_is_mask
+    stay in sync when the mask row is the selection anchor)."""
 
     def get_item_key(self, item):
         return item.name
@@ -69,8 +70,6 @@ class _BoneListVisibilityHooks(SuperSkinListMixin):
     def extra_keep_predicate(self, context, data, item, original_idx):
         if getattr(item, 'is_orphan', False):
             return False
-        if getattr(item, 'is_mask', False):
-            return False
         return _extra_keep_predicate_impl(context, data, item, original_idx)
 
 
@@ -80,6 +79,17 @@ _bone_visibility_hooks = _BoneListVisibilityHooks()
 # ==============================================================================
 # Adapter
 # ==============================================================================
+
+def _mask_key(obj):
+    """Return the mask row's list key (its ``.name``), or None if the mirror
+    collection has no mask row yet. Used to let the mask row share the same
+    selection plumbing (multi-select pool, range-select anchor) as real
+    bone rows, since it has no real ``vertex_groups`` index of its own."""
+    for item in obj.superskin_bones_collection:
+        if item.is_mask:
+            return item.name
+    return None
+
 
 class BoneListAdapter(ListSelectionAdapter):
     """Bridge between the generic row-click operator and the bone-list
@@ -101,7 +111,9 @@ class BoneListAdapter(ListSelectionAdapter):
             selected_keys = {n for n in raw.split(",") if n}
 
         last_key = None
-        if 0 <= storage.last_clicked_index < len(vg_list):
+        if storage.active_is_mask:
+            last_key = _mask_key(obj)
+        elif 0 <= storage.last_clicked_index < len(vg_list):
             last_key = vg_list[storage.last_clicked_index].name
 
         hist = []
@@ -131,10 +143,16 @@ class BoneListAdapter(ListSelectionAdapter):
         else:
             storage.selected_names = ","
 
-        if last_key and last_key in name_to_idx:
+        mask_key = _mask_key(obj)
+        if last_key is not None and last_key == mask_key:
+            storage.last_clicked_index = -1
+            storage.active_is_mask = True
+        elif last_key and last_key in name_to_idx:
             storage.last_clicked_index = name_to_idx[last_key]
+            storage.active_is_mask = False
         else:
             storage.last_clicked_index = -1
+            storage.active_is_mask = False
 
         hist_indices = []
         for k in history:
@@ -144,22 +162,31 @@ class BoneListAdapter(ListSelectionAdapter):
         storage.selection_history = ",".join(hist_indices)
 
     def on_single_select(self, context, obj, key):
-        """Reproduce the tail of the now-removed bone row-click operator.
-
-        Clears ``active_orphan_name``, exits mask mode, persists selection
-        to the active layer via CoreFacade, and sets the active bone name.
+        """Tail of a row click. Mask and real-bone rows share this path but
+        branch here: mask applies itself as the active mask context (mirrors
+        the old select_mask_row.execute() tail); real bones exit any
+        lingering mask-paint mode, persist the selection pool, and set the
+        active bone name.
         """
-        obj.superskin_storage.active_orphan_name = ""
-        obj.superskin_storage.active_is_mask = False
+        storage = obj.superskin_storage
+        storage.active_orphan_name = ""
+        mask_key = _mask_key(obj)
+
+        if key is not None and key == mask_key:
+            try:
+                from ...core.facade import CoreFacade
+                CoreFacade(context).apply_active_bone()
+            except Exception:
+                traceback.print_exc()
+            return
 
         from ...interface.utils.utils import exit_mask_mode_if_active
         exit_mask_mode_if_active(context, obj)
 
         try:
             from ...core.facade import CoreFacade
-            ctrl = CoreFacade(context).get_ctrl()
-            ctrl.set_selected_bones(obj.superskin_storage.selected_names)
-            storage = obj.superskin_storage
+            ctrl = CoreFacade(context)
+            ctrl.set_selected_bones(storage.selected_names)
             vg_list = obj.vertex_groups
             if 0 <= storage.last_clicked_index < len(vg_list):
                 ctrl.set_active_bone_name(vg_list[storage.last_clicked_index].name)
@@ -238,37 +265,50 @@ def _sync_bones_idx_to_real_bone(obj, vg_index: int):
 class SUPERSKIN_OT_select_mask_row(bpy.types.Operator):
     """Select the virtual Mask row in the Deform Bones list.
 
-    Single-select only — the mask row never joins the multi-select pool,
-    mirroring how ``superskin.select_orphan_bone_row`` (core/bone_identity)
-    handles orphan rows.
+    Shares the same click-resolution path as real bone rows
+    (Ctrl-click toggle, Shift-click range-select, Alt+Shift select-all) so
+    the mask row participates in multi-select like any other row —
+    mirrors ``SUPERSKIN_OT_select_vertex_group_row.invoke()`` exactly.
     """
 
     bl_idname = "superskin.select_mask_row"
     bl_label = "Select Layer Mask Row"
     bl_options = {'INTERNAL'}
 
-    def execute(self, context):
+    def invoke(self, context, event):
         obj = context.active_object
         if not obj or obj.type != 'MESH':
             return {'CANCELLED'}
 
-        from ...core.facade import CoreFacade
-        CoreFacade.debug_log("bone_id", f"select_mask_row.execute() ENTRY: obj={obj.name!r}")
+        item_key = _mask_key(obj)
+        if item_key is None:
+            return {'CANCELLED'}
 
-        storage = obj.superskin_storage
-        storage.active_orphan_name = ""
-        storage.last_clicked_index = -1
-        storage.active_is_mask = True
+        from ...core.facade import CoreFacade
+        CoreFacade.debug_log("bone_id", f"select_mask_row.invoke() ENTRY: obj={obj.name!r}")
+
+        was_suppressing = context.scene.superskin_internal_transaction
+        context.scene.superskin_internal_transaction = True
+        try:
+            adapter = get_adapter('BONES')
+            selected_keys, last_key, history = adapter.read_selection(context, obj)
+            visual_order = adapter.get_keys_in_visual_order(context, obj)
+
+            selected_keys, last_key, history = resolve_row_click_selection(
+                selected_keys, last_key, history, item_key, visual_order, event
+            )
+
+            adapter.write_selection(context, obj, selected_keys, last_key, history)
+            adapter.on_single_select(context, obj, item_key)
+        finally:
+            context.scene.superskin_internal_transaction = was_suppressing
+
         _sync_bones_idx_to_mask(obj)
 
-        try:
-            CoreFacade(context).get_ctrl().apply_active_bone()
-        except Exception:
-            traceback.print_exc()
-
+        storage = obj.superskin_storage
         CoreFacade.debug_log(
             "bone_id",
-            f"select_mask_row.execute() EXIT: active_is_mask={storage.active_is_mask} "
+            f"select_mask_row.invoke() EXIT: active_is_mask={storage.active_is_mask} "
             f"superskin_bones_idx={obj.superskin_bones_idx} "
             f"superskin_is_mask_mode={getattr(context.scene, 'superskin_is_mask_mode', None)}",
         )
@@ -469,7 +509,6 @@ def draw_influence_list_system(layout, context, rows=8):
             ("enum_radio", adv, "bone_list_filter_mode", 'NONE', 'LONGDISPLAY'),
             ("enum_radio", adv, "bone_list_filter_mode", 'INFLUENCE', 'BONE_DATA'),
             ("enum_radio", adv, "bone_list_filter_mode", 'ORPHAN', 'ERROR'),
-            ("enum_radio", adv, "bone_list_filter_mode", 'MASK', 'MOD_MASK'),
             ("separator", 1.0),
             ("operator", "object.mw_select_affect_vertices",
              'OUTLINER_DATA_POINTCLOUD', "", {}),

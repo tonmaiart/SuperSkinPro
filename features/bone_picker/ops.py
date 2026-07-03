@@ -9,6 +9,21 @@ from . import deform_overlay as _deform_overlay
 _bone_picker_active = False
 
 
+def _clear_mask_state(obj):
+    """Mask is just another row now, not a separate mode — picking a real
+    bone through the bone picker (hover preview, single pick, or multi
+    sweep) must exit mask context the same way clicking a real bone row in
+    the Deform Bones list does, or superskin_is_mask_mode stays stuck True
+    (blocking Auto Assign, and leaving the list looking unrefreshed) even
+    after a different bone becomes active. Caller is still responsible for
+    calling CoreFacade.apply_active_bone() afterward — that's what actually
+    re-derives superskin_is_mask_mode from this flag."""
+    storage = getattr(obj, "superskin_storage", None)
+    if storage is not None:
+        storage.active_is_mask = False
+        storage.active_orphan_name = ""
+
+
 class OBJECT_OT_ssp_toggle_color_bone_style(bpy.types.Operator):
     bl_idname = "superskin.toggle_color_bone_style"
     bl_label = "Toggle Color Bone Style"
@@ -47,8 +62,6 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
     def poll(cls, context):
         obj = context.active_object
         if not obj or obj.type != 'MESH':
-            return False
-        if getattr(context.scene, "superskin_is_mask_mode", False):
             return False
         return True
 
@@ -91,7 +104,8 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
                     self._last_hovered = self.hovered_bone
                     vg = obj.vertex_groups.get(self.hovered_bone)
                     if vg:
-                        ctrl = CoreFacade(context).get_ctrl()
+                        _clear_mask_state(obj)
+                        ctrl = CoreFacade(context)
                         ctrl.set_active_bone_name(self.hovered_bone)
                         ctrl.apply_active_bone()
                         self._sync_list_idx(obj, vg.index)
@@ -115,8 +129,7 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
                 _deform_overlay.clear_hover()
                 _deform_overlay.set_holding(False)
                 self._restore_overlay()
-                if obj and self.initial_vg_index != -1:
-                    obj.superskin_storage.last_clicked_index = self.initial_vg_index
+                self._cancel_revert(context, obj)
                 return {'CANCELLED'}
 
         # ── Middle mouse drag: sweep remove from multi-selection ─────────
@@ -148,8 +161,7 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
             _deform_overlay.clear_hover()
             _deform_overlay.set_holding(False)
             self._restore_overlay()
-            if obj and self.initial_vg_index != -1:
-                obj.superskin_storage.last_clicked_index = self.initial_vg_index
+            self._cancel_revert(context, obj)
             return {'CANCELLED'}
 
         elif event.type in {'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
@@ -158,6 +170,22 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     # ── Selection helpers ─────────────────────────────────────────────────────
+
+    def _cancel_revert(self, context, obj):
+        """Undo everything this picking session did to selection state —
+        single-pick and multi-select sweeps alike — restoring the exact
+        pre-invoke() snapshot. Used by both RIGHTMOUSE and ESC so the two
+        cancel paths behave identically."""
+        if not obj:
+            return
+        storage = obj.superskin_storage
+        storage.selected_names = self._initial_selected_names
+        storage.selection_history = self._initial_selection_history
+        storage.last_clicked_index = self.initial_vg_index
+        try:
+            CoreFacade(context).set_selected_bones(storage.selected_names)
+        except Exception:
+            pass
 
     def _sync_list_idx(self, obj, vg_index: int):
         """Sync superskin_bones_idx so template_list highlights the selected row."""
@@ -179,6 +207,8 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
         if not vg:
             return
 
+        _clear_mask_state(obj)
+
         # Use the comma-bounded format the BoneListAdapter expects so the
         # list row highlights correctly.
         storage.selected_names   = f",{bone_name},"
@@ -190,9 +220,10 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
         # Sync layer meta — same two calls the row-click operator makes via
         # on_single_select so the active bone is persisted per-layer.
         try:
-            ctrl = CoreFacade(context).get_ctrl()
+            ctrl = CoreFacade(context)
             ctrl.set_selected_bones(storage.selected_names)
             ctrl.set_active_bone_name(bone_name)
+            ctrl.apply_active_bone()
         except Exception:
             pass
 
@@ -204,10 +235,11 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
             return
         if f",{bone_name}," in storage.selected_names:
             return
+        _clear_mask_state(obj)
         if not storage.selected_names:
             storage.selected_names = ","
-        from ...core.facade import CoreFacade
-        CoreFacade(context).add_vg_selected(obj, bone_name)
+        ctrl = CoreFacade(context)
+        ctrl.add_vg_selected(obj, bone_name)
         vg = obj.vertex_groups.get(bone_name)
         if vg:
             storage.last_clicked_index = vg.index
@@ -215,6 +247,11 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
             self.session_recent_bone = bone_name
             self.session_pool.add(bone_name)
             self._sync_list_idx(obj, vg.index)
+            try:
+                ctrl.set_active_bone_name(bone_name)
+                ctrl.apply_active_bone()
+            except Exception:
+                pass
 
     def _sweep_remove_bone(self, context, bone_name):
         """Alt+Right sweep: remove bone_name from multi-selection pool."""
@@ -372,6 +409,8 @@ class OBJECT_OT_mw_pick_bone(bpy.types.Operator):
         self.mouse_y = event.mouse_region_y
         self.hovered_bone = None
         self.initial_vg_index = obj.superskin_storage.last_clicked_index if obj else -1
+        self._initial_selected_names = obj.superskin_storage.selected_names if obj else ""
+        self._initial_selection_history = obj.superskin_storage.selection_history if obj else ""
         self.is_sweep_add = False
         self.is_sweep_remove = False
         self._multi_mode = False

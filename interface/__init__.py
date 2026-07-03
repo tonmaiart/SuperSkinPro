@@ -11,7 +11,7 @@ Bottom-up micro-reload order (F3 > Reload Scripts safe):
   1. Foundations: registry, template_ui (no core/core_subsystems deps)
   2. Utilities: utils (deferred — depends on core_subsystems)
   3. Operators: ops_preferences_lists, ops_preferences
-  4. Layout Frames: widget_preferences, addon_preferences, panel_main
+  4. Layout Frames: widget_preferences, addon_preferences, panel_main, panel_gate
 
 Module-level imports are restricted to packages that do NOT import from
 core/ or core_subsystems/ at module scope, because core/shaders/shader_utils
@@ -45,6 +45,7 @@ _deferred_module_names = (
     "widget_preferences",
     "addon_preferences",
     "panel_main",
+    "panel_gate",
 )
 
 _deferred_loaded = False
@@ -98,6 +99,7 @@ def register():
     # 3. Layout frames
     addon_preferences.register()
     panel_main.register()
+    panel_gate.register()
     # widget_preferences has no bpy.types classes; nothing to register
 
 
@@ -105,6 +107,7 @@ def unregister():
     """Reverse-order unregistration."""
     _ensure_deferred()
 
+    panel_gate.unregister()
     panel_main.unregister()
     addon_preferences.unregister()
     ops_preferences.unregister()

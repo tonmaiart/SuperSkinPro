@@ -102,7 +102,7 @@ class WM_OT_superskin_export_json(bpy.types.Operator, ExportHelper):
                 if idx < 0:
                     continue
                 facade.switch_to_layer(idx, push_undo=False)
-                weight_dict = facade.get_active_layer_dict()
+                weight_dict = facade.read_active_layer()
                 mask_dict = facade.get_active_mask_dict()
                 export_data["layers"].append({
                     "index": idx,
