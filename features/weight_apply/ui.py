@@ -39,6 +39,7 @@ def _draw_smooth_row(col, p):
     row.scale_y = 0.75
     row.prop(p, "smooth_val", text="", slider=True)
     row.menu("SUPERSKIN_MT_smooth_presets", text="", icon='PRESET')
-    sub = right.row(align=True)
-    sub.scale_y = 0.55
-    sub.prop(p, "smooth_affected_only", text="Smooth Affected Only", toggle=False)
+    opts = right.column(align=True)
+    opts.scale_y = 0.55
+    opts.prop(p, "smooth_affected_only", text="Smooth Affected Only", toggle=False)
+    opts.prop(p, "smooth_across_surface", text="Smooth Across Surface", toggle=False)

@@ -24,7 +24,7 @@ class SUPERSKIN_OT_circle_tool_adjust_radius(bpy.types.Operator):
                 context.area.header_text_set(f"Brush Radius: {new_radius}")
                 context.window.cursor_warp(self._initial_x, self._initial_y)
 
-        elif event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+        elif event.type == self._trigger_type and event.value == 'RELEASE':
             context.window.cursor_modal_restore()
             context.area.header_text_set(None)
             return {'FINISHED'}
@@ -41,6 +41,7 @@ class SUPERSKIN_OT_circle_tool_adjust_radius(bpy.types.Operator):
         if context.space_data.type != 'VIEW_3D':
             return {'CANCELLED'}
         prefs = context.window_manager.superskin_circle_tool_adjust_prefs
+        self._trigger_type = event.type
         self._initial_x = event.mouse_x
         self._initial_y = event.mouse_y
         self._backup_radius = prefs.brush_radius_value

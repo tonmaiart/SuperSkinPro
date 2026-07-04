@@ -1,9 +1,17 @@
 """Bone Picker keymap registration — owned by the bone_picker feature package.
 
 Shortcuts:
-  Alt+2          → invoke bone picker modal (stays open until explicitly cancelled)
-  Alt+Shift+2    → toggle deform bone overlay visibility
-  Alt+3          → toggle color bone style
+  Alt+2            → invoke bone picker modal (stays open until explicitly cancelled)
+  Alt+Shift+2      → toggle deform bone overlay visibility
+  Alt+3            → toggle color bone style
+  Alt+Shift+MMB    → adjust bone overlay size (hold + drag)
+
+Alt+Shift+MMB previously was plain Alt+RMB, moved here because Alt+RMB
+became the Weight Apply "smooth_sharpen" gesture shortcut
+(features/weight_apply/keymap.py). `SUPERSKIN_OT_adjust_bone_overlay_size`
+(ops.py) records the triggering mouse button at invoke and matches release
+against that button rather than a hardcoded one, since the bound button has
+changed.
 
 Inside the modal:
   Left click / drag  → sweep add to multi selection
@@ -33,7 +41,9 @@ def register():
     _keymaps.append((km, kmi))
 
     km = kc.keymaps.new(name='Mesh', space_type='EMPTY')
-    kmi = km.keymap_items.new("superskin.adjust_bone_overlay_size", type='RIGHTMOUSE', value='PRESS', alt=True)
+    kmi = km.keymap_items.new(
+        "superskin.adjust_bone_overlay_size", type='MIDDLEMOUSE', value='PRESS', alt=True, shift=True,
+    )
     _keymaps.append((km, kmi))
 
 

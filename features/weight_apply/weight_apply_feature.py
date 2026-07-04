@@ -53,6 +53,16 @@ class SSPrefWeightApply(bpy.types.PropertyGroup):
         default=False,
         update=_on_intensity_changed,
     )
+    smooth_across_surface: bpy.props.BoolProperty(
+        name="Smooth Across Surface",
+        description=(
+            "Expand the smoothing neighborhood using surface (geodesic) distance "
+            "instead of raw vertex adjacency, so results stay consistent across "
+            "areas with uneven topology density"
+        ),
+        default=False,
+        update=_on_intensity_changed,
+    )
 
 
 # ==============================================================================
@@ -90,28 +100,53 @@ class WeightApplyFeature(UnifiedFeatureExtension):
     
     # ── Action dispatch ───────────────────────────────────────────────────
 
-    def execute(self, action: str, context, core_facade: CoreFacade) -> dict:
-        from .logic import apply_add, apply_scale, apply_smooth, apply_sharpen
+    def snapshot_context(self, core_facade: CoreFacade) -> dict:
+        """Read everything an apply action needs to compute from, once.
 
-        p = get_prefs()
+        Used both by the single-shot `execute()` path and by the gesture
+        modal operator (`ops.py:SUPERSKIN_OT_weight_gesture`). The gesture
+        operator re-runs `apply_action()` on every mouse-move at a changing
+        intensity, and must always compute from this same fixed baseline —
+        recomputing from `core_facade` fresh each move would apply on top of
+        the previous preview's result and compound instead of preview.
+        """
         is_mask = core_facade.is_mask_context()
         active_vg_id = core_facade.get_active_vg_id()
-
-        core_facade.debug_log(
-            "feature_domains",
-            f"weight_apply.execute() action={action!r} is_mask={is_mask} "
-            f"active_vg_id={active_vg_id}",
-        )
-
         layer_str = core_facade.read_active_layer()
         bone_to_id, id_to_bone = core_facade.get_unified_mapping()
         layer_int = {
             v_idx: {bone_to_id[b]: w for b, w in weights.items() if b in bone_to_id}
             for v_idx, weights in layer_str.items()
         }
-        mask_dict = core_facade.get_active_mask_dict()
-        locks_id = core_facade.get_locks_by_id()
-        selected = core_facade.get_selected_verts()
+        return {
+            "is_mask": is_mask,
+            "active_vg_id": active_vg_id,
+            "layer_int": layer_int,
+            "id_to_bone": id_to_bone,
+            "mask_dict": core_facade.get_active_mask_dict(),
+            "locks_id": core_facade.get_locks_by_id(),
+            "selected": core_facade.get_selected_verts(),
+        }
+
+    def apply_action(self, action: str, core_facade: CoreFacade, ctx: dict,
+                     intensity: float, *, affected_only: bool = None) -> dict:
+        """Compute `action` from the `ctx` baseline (see `snapshot_context()`)
+        at `intensity`, then write the result. Never mutates `ctx`, so it is
+        safe to call repeatedly from the same snapshot (gesture drag preview)
+        without compounding."""
+        from .logic import (
+            apply_add, apply_scale, apply_smooth, apply_sharpen,
+            build_surface_neighbors, SHARPEN_RADIUS_MULTIPLIER,
+        )
+
+        p = get_prefs()
+        is_mask = ctx["is_mask"]
+        active_vg_id = ctx["active_vg_id"]
+        id_to_bone = ctx["id_to_bone"]
+        selected = ctx["selected"]
+        locks_id = ctx["locks_id"]
+        layer_int = {v: dict(w) for v, w in ctx["layer_int"].items()}
+        mask_dict = dict(ctx["mask_dict"])
 
         if action == "add":
             if active_vg_id is None and not is_mask:
@@ -119,7 +154,7 @@ class WeightApplyFeature(UnifiedFeatureExtension):
             res_layer, res_mask = apply_add(
                 layer_int, mask_dict, selected,
                 active_vg_id if active_vg_id is not None else -1,
-                p.add_val, locks_id,
+                intensity, locks_id,
                 core_facade.get_active_layer_index(), is_mask,
             )
 
@@ -129,25 +164,33 @@ class WeightApplyFeature(UnifiedFeatureExtension):
             res_layer, res_mask = apply_scale(
                 layer_int, mask_dict, selected,
                 active_vg_id if active_vg_id is not None else -1,
-                p.scale_val, locks_id, is_mask,
+                intensity, locks_id, is_mask,
             )
 
         elif action == "smooth":
+            if p.smooth_across_surface:
+                neighbors = build_surface_neighbors(core_facade, selected)
+            else:
+                neighbors = core_facade.get_cached_mesh_neighbors()
             res_layer, res_mask = apply_smooth(
                 layer_int, mask_dict, selected,
-                core_facade.get_cached_mesh_neighbors(),
-                p.smooth_val, locks_id,
-                p.smooth_affected_only, is_mask,
+                neighbors,
+                intensity, locks_id,
+                p.smooth_affected_only if affected_only is None else affected_only,
+                is_mask,
             )
 
         elif action == "sharpen":
             if active_vg_id is None and not is_mask:
                 return {"status": "CANCELLED", "message": "No active bone"}
+            neighbors = build_surface_neighbors(
+                core_facade, selected, radius_multiplier=SHARPEN_RADIUS_MULTIPLIER,
+            )
             res_layer, res_mask = apply_sharpen(
                 layer_int, mask_dict, selected,
-                core_facade.get_cached_mesh_neighbors(),
+                neighbors,
                 active_vg_id if active_vg_id is not None else -1,
-                p.sharpen_val, is_mask,
+                intensity, is_mask,
             )
 
         else:
@@ -158,7 +201,7 @@ class WeightApplyFeature(UnifiedFeatureExtension):
             # non-selected vertices keep their existing mask values.  Rust returns
             # only the selected vertices in res_mask; writing it directly would clear
             # every other vertex's mask to 0.
-            full_mask = dict(mask_dict)
+            full_mask = dict(ctx["mask_dict"])
             full_mask.update(res_mask)
             # Use the ctrl escape with is_mask_mode=True to bypass the bone
             # normalization loop, which would otherwise prune unselected vertices.
@@ -173,9 +216,24 @@ class WeightApplyFeature(UnifiedFeatureExtension):
             }
             core_facade.write_active_layer(res_layer_str, color_only=True)
 
-        core_facade.debug_log("feature_domains", f"weight_apply.execute() action={action!r} done")
-
         return {"status": "FINISHED"}
+
+    def execute(self, action: str, context, core_facade: CoreFacade) -> dict:
+        p = get_prefs()
+        core_facade.debug_log(
+            "feature_domains",
+            f"weight_apply.execute() action={action!r}",
+        )
+
+        ctx = self.snapshot_context(core_facade)
+        intensity = {
+            "add": p.add_val, "scale": p.scale_val,
+            "smooth": p.smooth_val, "sharpen": p.sharpen_val,
+        }.get(action, 0.0)
+        result = self.apply_action(action, core_facade, ctx, intensity)
+
+        core_facade.debug_log("feature_domains", f"weight_apply.execute() action={action!r} done")
+        return result
 
     # ── UI layout ─────────────────────────────────────────────────────────
 
@@ -194,6 +252,7 @@ class WeightApplyFeature(UnifiedFeatureExtension):
         p.smooth_val = float(data.get("smooth_val", 0.61))
         p.sharpen_val = float(data.get("sharpen_val", 0.61))
         p.smooth_affected_only = bool(data.get("smooth_affected_only", False))
+        p.smooth_across_surface = bool(data.get("smooth_across_surface", False))
 
     def serialize_into(self, full_dict: dict) -> None:
         """Write current values into full_dict at the correct JSON path."""
@@ -204,6 +263,7 @@ class WeightApplyFeature(UnifiedFeatureExtension):
             "smooth_val": p.smooth_val,
             "sharpen_val": p.sharpen_val,
             "smooth_affected_only": p.smooth_affected_only,
+            "smooth_across_surface": p.smooth_across_surface,
         }
 
 

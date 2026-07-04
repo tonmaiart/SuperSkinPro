@@ -448,11 +448,11 @@ class SUPERSKIN_OT_toggle_deform_bone_overlay(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_DRAG_THRESHOLD = 4  # pixels before a right-click becomes a drag
+_DRAG_THRESHOLD = 4  # pixels before a click becomes a drag
 
 
 class SUPERSKIN_OT_adjust_bone_overlay_size(bpy.types.Operator):
-    """Alt+RMB drag to resize bone overlay."""
+    """Alt+Shift+MMB drag to resize bone overlay."""
     bl_idname = "superskin.adjust_bone_overlay_size"
     bl_label = "Adjust Bone Overlay Size"
     bl_options = {'REGISTER'}
@@ -474,7 +474,7 @@ class SUPERSKIN_OT_adjust_bone_overlay_size(bpy.types.Operator):
                 _deform_overlay._tag_redraw()
                 context.window.cursor_warp(self._initial_x, self._initial_y)
 
-        elif event.type == 'RIGHTMOUSE' and event.value == 'RELEASE':
+        elif event.type == self._trigger_type and event.value == 'RELEASE':
             context.window.cursor_modal_restore()
             context.area.header_text_set(None)
             return {'FINISHED'}
@@ -494,6 +494,7 @@ class SUPERSKIN_OT_adjust_bone_overlay_size(bpy.types.Operator):
             return {'CANCELLED'}
         if not context.space_data or context.space_data.type != 'VIEW_3D':
             return {'CANCELLED'}
+        self._trigger_type = event.type
         self._initial_x = event.mouse_x
         self._initial_y = event.mouse_y
         try:
