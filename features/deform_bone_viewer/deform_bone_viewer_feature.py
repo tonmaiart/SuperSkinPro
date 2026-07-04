@@ -49,7 +49,7 @@ class DeformBoneViewerFeature(UnifiedFeatureExtension):
         if not obj or obj.type != 'MESH':
             box.label(text="No mesh active", icon='ERROR')
             return
-        ui.draw_influence_list_system(box, context, rows=8)
+        ui.draw_influence_list_system(box, context, rows=5)
         box.separator(factor=0.4)
         row = box.row()
         row.scale_y = 1.4

@@ -6,26 +6,31 @@ Combines name-pair generation with the layer-aware mirror operation.
 - ``generate_pairs`` remains string-based (pattern matching needs bone names)
 - ``apply`` and ``apply_mask`` use Integer Bone IDs for inner layer_dict keys
 
-⚡ GAP-FILL FALLBACK:
-- ``apply`` / ``apply_mask_flat`` return ``(result, gap_v_indices)``. The Rust
-  nearest-vertex pass is unchanged and still wins whenever a match exists
-  within tolerance; ``gap_v_indices`` lists only the target-side vertices it
-  couldn't resolve (e.g. asymmetric topology). ``_fill_weight_gaps`` /
-  ``_fill_mask_gaps`` below fill exactly those, via the same "closest point
-  on surface + barycentric blend" approach as
-  ``features/weight_transfer/transfer_core.py``, so exact-match vertices are
-  never touched or softened.
-
-⚡ TOPOLOGY-BASED SIDE CLASSIFICATION:
-- ``apply`` / ``apply_mask_flat`` both take a ``target_side_mask`` — a
-  per-vertex bool list from ``classify_sides_by_topology()``, NOT a raw
-  coordinate-sign test. When the mesh visually intersects across the mirror
-  plane (e.g. an oversized pant leg poking into the other leg), a vertex
-  that's topologically part of one side can have a coordinate that dips
-  onto the other — confirmed by a user report where the mirrored weight
-  data itself (not just its rendering) was wrong right in the overlap
-  region. The mask is computed once per pipeline run and shared by both
-  channels and the gap-fill fallback's source-side surface.
+⚡ WEIGHT vs. MASK CHANNEL — DIFFERENT SIDE-CLASSIFICATION STRATEGIES:
+- **Weight channel (``apply``)** uses ``target_side_mask`` — a per-vertex
+  bool list from ``classify_sides_by_topology()``, NOT a raw coordinate-sign
+  test. When the mesh visually intersects across the mirror plane (e.g. an
+  oversized pant leg poking into the other leg), a vertex that's
+  topologically part of one side can have a coordinate that dips onto the
+  other — confirmed by a user report where the mirrored weight data itself
+  (not just its rendering) was wrong right in the overlap region. It also
+  gets a gap-fill fallback (``apply`` returns ``(result, gap_v_indices)``;
+  ``_fill_weight_gaps`` covers the target-side vertices the Rust
+  nearest-vertex pass couldn't resolve within tolerance, via the same
+  "closest point on surface + barycentric blend" approach as
+  ``features/weight_transfer/transfer_core.py``). Separately,
+  ``_symmetrize_center_vertices`` forces a true 50/50 split on vertices
+  sitting exactly on the mirror seam (see its own docstring) — a small,
+  fixed-epsilon check kept deliberately independent of
+  ``classify_sides_by_topology()``'s wide margin, so it can never affect
+  self-intersection handling.
+- **Mask channel (``apply_mask_flat``)** deliberately stays on the ORIGINAL
+  raw coordinate-sign test, with no gap-fill — the topology classification
+  was confirmed to badly misclassify most of a complex character mesh's
+  mask coverage (only a small, simple region came out right; gap-fill was
+  silently papering over the rest of the mesh). Reverted per explicit user
+  request after that regression; the weight channel's fix stays since it
+  was independently confirmed to work well.
 """
 
 import heapq
@@ -234,23 +239,33 @@ def apply_mask(mask_dict, vertex_coords, axis, direction):
     return {k: v for k, v in result.items()}
 
 
-def apply_mask_flat(mask_dict: dict, vertex_coords: list, target_side_mask: list,
+def apply_mask_flat(mask_dict: dict, vertex_coords: list,
                     axis: str, direction: str,
                     num_verts: int) -> tuple:
     """⚡ Zero-copy flat-array mirror mask via CSR bridge.
 
-    *target_side_mask* — see ``apply()``'s and the module docstring's
-    "TOPOLOGY-BASED SIDE CLASSIFICATION".
+    Deliberately kept on the original raw coordinate-sign test (unlike
+    ``apply()``'s ``target_side_mask``) — the topology-based classification
+    was confirmed to badly misclassify most of a complex character mesh's
+    mask coverage (gap-fill was silently papering over most of it). The
+    weight channel's classification fix stays; the mask channel keeps this
+    self-contained raw coordinate test per ``features/mirror/README.md``'s
+    guardrail: the two channels must never share a side-classification
+    helper again.
 
-    Returns ``(mask_dict, gap_v_indices)`` — see module docstring's
-    "GAP-FILL FALLBACK". ``mask_dict`` is int-keyed.
+    Returns ``(mask_dict, gap_v_indices)`` — ``gap_v_indices`` are target-side
+    vertices (by the SAME raw coordinate test, computed inside Rust) left
+    unmirrored by the nearest-vertex pass, for ``_fill_mask_gaps()`` to fill
+    via a BVH surface fallback built from ``build_source_side_surface_raw()``
+    — never ``build_source_side_surface()``/``target_side_mask``, which is
+    weight-channel-only. ``mask_dict`` is int-keyed.
     """
     rust = CoreFacade.get_rust_gateway("mirror_apply_mask_flat")
     _bridge = CoreFacade.get_flat_array_bridge()
     mask_flat = _bridge.mask_to_flat(mask_dict, num_verts, sentinel=_bridge.MASK_SENTINEL)
     res_mask_flat, gap_v_indices = rust.call(
         "rust_mirror_apply_mask_flat",
-        mask_flat, vertex_coords, target_side_mask, axis, direction,
+        mask_flat, vertex_coords, axis, direction,
     )
     result = _bridge.flat_to_mask(res_mask_flat, sentinel=_bridge.MASK_SENTINEL)
     return result, [int(v) for v in gap_v_indices]
@@ -259,33 +274,14 @@ def apply_mask_flat(mask_dict: dict, vertex_coords: list, target_side_mask: list
 _AXIS_IDX = {"X": 0, "Y": 1, "Z": 2}
 
 
-def build_local_surface(core_facade):
-    """Local-space triangulated BVH of the *whole* active mesh (both sides).
-
-    Used only by ``check_self_intersection``, which genuinely needs both
-    sides of the surface to detect where they cross. Local space (not
-    world) matches the coordinate space ``vertex_coords`` already uses
-    everywhere else in this module.
-
-    ⚠️ Do NOT reuse this for the gap-fill fallback — see
-    ``build_source_side_surface`` for why.
-    """
-    mesh = core_facade.get_mesh()
-    mesh.calc_loop_triangles()
-    positions = [Vector(v.co) for v in mesh.vertices]
-    triangles = [tuple(lt.vertices) for lt in mesh.loop_triangles]
-    bvh = BVHTree.FromPolygons(positions, triangles, all_triangles=True)
-    return bvh, triangles, positions
-
-
 def build_source_side_surface(core_facade, target_side_mask):
     """Local-space triangulated BVH of the source side ONLY, for the gap-fill
     fallback (see module docstring's "GAP-FILL FALLBACK").
 
     A whole-mesh BVH is wrong here whenever the source and target sides
     physically overlap (e.g. an oversized pant leg intersecting the other
-    leg, ``check_self_intersection``'s exact scenario): the flipped query
-    point can end up geometrically closer to the target side's own folded
+    leg): the flipped query point can end up geometrically closer to the
+    target side's own folded
     geometry than to the true mirrored source point, bleeding in weight
     data from the wrong side entirely (confirmed by a visible "spiky" weight
     artifact on an intersecting model). Restricting the BVH to triangles
@@ -308,6 +304,46 @@ def build_source_side_surface(core_facade, target_side_mask):
     triangles = [
         tuple(lt.vertices) for lt in mesh.loop_triangles
         if all(not target_side_mask[i] for i in lt.vertices)
+    ]
+    if not triangles:
+        return None
+    bvh = BVHTree.FromPolygons(positions, triangles, all_triangles=True)
+    return bvh, triangles, positions
+
+
+def _is_source_side_raw(coord, axis_idx, direction):
+    """Raw coordinate-sign source-side test — the MASK channel's own,
+    self-contained side test. Deliberately NOT ``target_side_mask``/
+    ``classify_sides_by_topology()`` — see ``build_source_side_surface_raw()``.
+    """
+    eps = 1e-5
+    val = coord[axis_idx]
+    if direction == 'POS_NEG':
+        return val >= -eps
+    return val <= eps
+
+
+def build_source_side_surface_raw(core_facade, axis_idx, direction):
+    """Local-space triangulated BVH of the source side ONLY, for the MASK
+    channel's gap-fill fallback — using a plain raw coordinate-sign test,
+    NOT ``target_side_mask``/``classify_sides_by_topology()``.
+
+    Per ``features/mirror/README.md``'s guardrail: the weight and mask
+    channels must use independent side-classification methods, never share
+    one. Wiring the mask channel into the topology-based classification was
+    tried and confirmed to badly misclassify most of a complex character
+    mesh's mask coverage — this function exists specifically so the mask
+    channel's gap-fill never touches that classification again.
+
+    Returns ``None`` if the mesh has no fully source-side triangle (nothing
+    for the fallback to blend from).
+    """
+    mesh = core_facade.get_mesh()
+    mesh.calc_loop_triangles()
+    positions = [Vector(v.co) for v in mesh.vertices]
+    triangles = [
+        tuple(lt.vertices) for lt in mesh.loop_triangles
+        if all(_is_source_side_raw(positions[i], axis_idx, direction) for i in lt.vertices)
     ]
     if not triangles:
         return None
@@ -378,16 +414,105 @@ def _fill_weight_gaps(layer_dict_before, result, gap_v_indices, id_pairs,
         result[v_idx] = dict(rust.call("rust_norm_all_unlocked", v_weights, vertex_groups_lock))
 
 
-def _fill_mask_gaps(mask_dict_before, result, gap_v_indices, vertex_coords, axis_idx, surface):
+_CENTER_EPSILON = 1e-4
+
+
+def _is_true_center_vertex(coord, axis_idx, epsilon=_CENTER_EPSILON):
+    """Strict "is this vertex sitting exactly on the mirror seam" test.
+
+    Deliberately a small FIXED absolute epsilon, NOT related to
+    ``classify_sides_by_topology()``'s wide (15%-of-span) classification
+    margin. A prior attempt at forcing seam vertices to a 50/50 split
+    reused/overlapped with that wide margin and regressed the
+    self-intersecting-mesh handling the margin exists for — keeping this
+    check narrow and fully independent avoids that trap. This only ever
+    matches vertices genuinely on the mirror plane, never the "confidently
+    one side or the other, just within the classification margin" vertices
+    ``classify_sides_by_topology()`` deals with.
+    """
+    return abs(coord[axis_idx]) <= epsilon
+
+
+def _symmetrize_center_vertices(result, id_pairs, vertex_coords, axis_idx, vertex_groups_lock):
+    """Force a true 50/50 split on each mirrored bone-pair's weight for
+    vertices sitting exactly on the mirror seam (see
+    ``_is_true_center_vertex``).
+
+    A seam vertex is a single, shared point on a symmetric mesh — neither
+    "source" nor "target" — so it should never end up holding 100% of one
+    paired bone and 0% of the other (e.g. a vertex authored with only
+    ``Leg.L`` weight and never split, that happens to sit exactly on the
+    mirror plane). ``classify_sides_by_topology()``'s raw-coordinate
+    fallback (and the Rust ``is_target``/``_raw_side`` tests) always
+    classify an exact-zero coordinate as source-side, so ``apply()``'s
+    STEP 1-4 never clears or writes into these vertices at all — this is a
+    deliberately separate post-process, run entirely independently of
+    ``target_side_mask``, so it can never perturb the self-intersection-safe
+    classification used everywhere else in the weight channel.
+
+    Locked bones are left untouched on a given vertex (that bone pair is
+    skipped) to respect the same lock contract as the rest of the pipeline.
+
+    Returns the list of vertex indices actually touched.
+    """
+    touched = []
+    for v_idx, coord in enumerate(vertex_coords):
+        if not _is_true_center_vertex(coord, axis_idx):
+            continue
+        vw = result.get(v_idx)
+        if not vw:
+            continue
+
+        changed = False
+        for src_id, tgt_id in id_pairs.items():
+            if vertex_groups_lock.get(src_id) or vertex_groups_lock.get(tgt_id):
+                continue
+            w_src = vw.get(src_id, 0.0)
+            w_tgt = vw.get(tgt_id, 0.0)
+            if w_src == 0.0 and w_tgt == 0.0:
+                continue
+            half = (w_src + w_tgt) / 2.0
+            if w_src != half:
+                vw[src_id] = half
+                changed = True
+            if w_tgt != half:
+                vw[tgt_id] = half
+                changed = True
+
+        if changed:
+            touched.append(v_idx)
+
+    if not touched:
+        return touched
+
+    rust = CoreFacade.get_rust_gateway("norm_all_unlocked")
+    for v_idx in touched:
+        v_weights = result.get(v_idx)
+        if not v_weights:
+            continue
+        result[v_idx] = dict(rust.call("rust_norm_all_unlocked", v_weights, vertex_groups_lock))
+
+    return touched
+
+
+def _fill_mask_gaps(mask_dict_before, result, gap_v_indices, vertex_coords, axis_idx, surface, mask_default):
     """BVH + barycentric fallback for the mask channel's gaps.
 
-    Missing-vertex fallback default is ``1.0`` (a "filled white" layer has
-    no dense per-vertex mask entries), matching the confirmed-correct
-    convention in ``docs/bug-history/0023`` rather than a bare ``0.0``.
+    Mirrors ``_fill_weight_gaps()``'s approach (same "closest point on
+    surface + barycentric blend" as ``transfer_core``), but for the mask
+    channel — restricted to gap vertices only, so exact-match vertices are
+    never touched or softened.
 
-    *surface* must be a **source-side-only** surface — see
-    ``_fill_weight_gaps``'s note on why a whole-mesh surface can bleed data
-    from the target side's own geometry when the mesh self-intersects.
+    Missing-vertex fallback uses *mask_default* — the active Layer's own
+    ``mask_default`` field (see ``docs/bug-history/0023`` and ``0024``) —
+    never a hardcoded constant. A "filled" Layer has no dense per-vertex
+    mask entries at all, and its real default can legitimately be anything
+    (e.g. ``0.0`` for a mostly-unpainted "cutout" layer), not just ``1.0``.
+
+    *surface* must be from ``build_source_side_surface_raw()`` — the mask
+    channel's own raw-coordinate-test surface, NEVER
+    ``build_source_side_surface()``/``target_side_mask`` (weight-channel-only,
+    see ``features/mirror/README.md``'s guardrail).
     """
     if not gap_v_indices or surface is None:
         return
@@ -401,46 +526,9 @@ def _fill_mask_gaps(mask_dict_before, result, gap_v_indices, vertex_coords, axis
 
         tri = triangles[tri_idx]
         bary = poly_3d_calc([positions[i] for i in tri], location)
-        mask_val = sum(w * mask_dict_before.get(src_v, 1.0) for w, src_v in zip(bary, tri))
+        mask_val = sum(w * mask_dict_before.get(src_v, mask_default) for w, src_v in zip(bary, tri))
         if mask_val > 0.0:
             result[v_idx] = mask_val
-
-
-def check_self_intersection(core_facade, axis_idx, surface, ignore_zone=1e-4):
-    """Detect whether the mesh's own geometry already crosses the mirror
-    plane into where its mirrored copy will sit (e.g. an oversized pant leg
-    that intersects the opposite leg before any mirroring happens).
-
-    This is purely a rest-pose geometry check — independent of weight data
-    — using ``mathutils.bvhtree.BVHTree.overlap()`` against a flipped copy
-    of the same surface. Detection only: never blocks or alters the mirror,
-    the caller only warns.
-
-    Returns the set of vertex indices (in the *original*, unflipped mesh)
-    involved in an out-of-band overlap. Overlaps confined to the centerline
-    seam itself (within ``ignore_zone`` of the mirror plane) are excluded,
-    since a correctly-built symmetric mesh's own seam triangles are
-    expected to touch their mirrored copy there by construction.
-    """
-    bvh, triangles, positions = surface
-    flipped_positions = [_flip_point(p, axis_idx) for p in positions]
-    bvh_flipped = BVHTree.FromPolygons(flipped_positions, triangles, all_triangles=True)
-
-    overlaps = bvh.overlap(bvh_flipped)
-    if not overlaps:
-        return set()
-
-    hit_verts = set()
-    for tri_a_idx, tri_b_idx in overlaps:
-        tri_a = triangles[tri_a_idx]
-        tri_b = triangles[tri_b_idx]
-        if all(abs(positions[i][axis_idx]) <= ignore_zone for i in tri_a) and \
-           all(abs(positions[i][axis_idx]) <= ignore_zone for i in tri_b):
-            continue
-        hit_verts.update(tri_a)
-        hit_verts.update(tri_b)
-
-    return hit_verts
 
 
 def build_layer_mirror_plan(core_facade, axis, direction, sr_raw):
@@ -516,53 +604,35 @@ def execute_mirror_pipeline(core_facade):
     axis = MirrorPreferencesService.get_mirror_axis()
     direction = MirrorPreferencesService.get_mirror_direction()
     sr_raw = MirrorPreferencesService.get_mirror_search_replace_pairs()
-    is_mask = core_facade.is_mask_context()
-    both_data = MirrorPreferencesService.get_mirror_both_data()
-    fill_gaps = MirrorPreferencesService.get_mirror_fill_gaps()
-    warn_intersection = MirrorPreferencesService.get_mirror_warn_self_intersection()
+    mirror_data = MirrorPreferencesService.get_mirror_data()
     axis_idx = _AXIS_IDX[axis]
 
-    do_mask = is_mask or both_data
-    do_layer = (not is_mask) or both_data
+    do_mask = mirror_data in ('MASK', 'BOTH')
+    do_layer = mirror_data in ('BONE', 'BOTH')
 
     CoreFacade.debug_log(
         "feature_domains",
-        f"mirror.execute_mirror_pipeline(): is_mask={is_mask} both_data={both_data} "
+        f"mirror.execute_mirror_pipeline(): mirror_data={mirror_data} "
         f"do_mask={do_mask} do_layer={do_layer} obj.mode={core_facade.get_obj().mode} "
-        f"axis={axis} direction={direction} fill_gaps={fill_gaps} "
-        f"warn_intersection={warn_intersection}",
+        f"axis={axis} direction={direction}",
     )
 
     # Topology-based side classification (see module docstring's
-    # "TOPOLOGY-BASED SIDE CLASSIFICATION") — computed once and shared by
-    # both channels below AND the gap-fill fallback's source-side surface,
-    # since a self-intersecting mesh needs the SAME side assignment
-    # everywhere or the channels would disagree on which vertex is which side.
+    # "WEIGHT vs. MASK CHANNEL" note) — used ONLY by the weight channel
+    # (``apply()``) and its gap-fill's source-side surface below. The mask
+    # channel deliberately computes its OWN, independent raw-coordinate
+    # surface further down — see ``features/mirror/README.md``'s guardrail:
+    # the two channels must never share a side-classification helper.
     target_side_mask = classify_sides_by_topology(core_facade, axis_idx, direction)
 
-    # check_self_intersection needs BOTH sides of the surface (that's the whole
-    # point — detecting where they cross). The gap-fill fallback below must
-    # instead use a SOURCE-SIDE-ONLY surface, or a self-intersecting mesh
-    # bleeds weight from the target side's own geometry into the fallback
-    # (confirmed: caused a visible "spiky" weight artifact on an intersecting
-    # model) — these are two different BVHs, never reuse one for the other.
-    intersect_surface = build_local_surface(core_facade) if warn_intersection else None
-    fill_surface = (
-        build_source_side_surface(core_facade, target_side_mask) if fill_gaps else None
-    )
-
-    if warn_intersection:
-        hit_verts = check_self_intersection(core_facade, axis_idx, intersect_surface)
-        if hit_verts:
-            core_facade.show_toast(
-                f"Mirror: {len(hit_verts)} vertex(es) already cross the mirror "
-                "plane before mirroring — check for oversized geometry."
-            )
-            CoreFacade.debug_log(
-                "feature_domains",
-                f"mirror.execute_mirror_pipeline(): self-intersection pre-flight "
-                f"found {len(hit_verts)} vertex(es): {sorted(hit_verts)[:20]!r}",
-            )
+    # Gap-fill always runs when gaps exist — each surface builder already
+    # returns None gracefully if the mesh has no fully source-side triangle,
+    # and both fill functions already no-op on an empty gap list, so building
+    # these unconditionally is safe.
+    fill_surface = build_source_side_surface(core_facade, target_side_mask)
+    # Mask channel's OWN gap-fill surface — raw coordinate-sign test, NOT
+    # target_side_mask (see the guardrail above).
+    mask_fill_surface = build_source_side_surface_raw(core_facade, axis_idx, direction)
 
     if do_layer:
         id_pairs = build_layer_mirror_plan(core_facade, axis, direction, sr_raw)
@@ -579,20 +649,34 @@ def execute_mirror_pipeline(core_facade):
     if do_mask:
         mask_dict = core_facade.get_active_mask_dict()
         vertex_coords = core_facade.get_vertex_coordinates()
+
+        # Missing-vertex gap-fill fallback must use the active Layer's own
+        # mask_default, not a hardcoded constant — see docs/bug-history/0024
+        # (a sibling bug to 0023: a sparse mask dict's missing entries mean
+        # "use this Layer's own default," which is not always 1.0).
+        active_idx = core_facade.get_active_layer_index()
+        mask_default = 1.0
+        for m in core_facade.get_meta_list():
+            if m.get("index", -1) == active_idx:
+                mask_default = float(m.get("mask_default", 1.0))
+                break
+
         res_mask, mask_gaps = apply_mask_flat(
             mask_dict=mask_dict,
             vertex_coords=vertex_coords,
-            target_side_mask=target_side_mask,
             axis=axis,
             direction=direction,
             num_verts=core_facade.get_num_verts(),
         )
-        if fill_gaps and mask_gaps:
-            _fill_mask_gaps(mask_dict, res_mask, mask_gaps, vertex_coords, axis_idx, fill_surface)
+        if mask_gaps:
+            _fill_mask_gaps(
+                mask_dict, res_mask, mask_gaps, vertex_coords, axis_idx,
+                mask_fill_surface, mask_default,
+            )
             CoreFacade.debug_log(
                 "feature_domains",
                 f"mirror.execute_mirror_pipeline(): mask gap-fill covered "
-                f"{len(mask_gaps)} candidate vertex(es)",
+                f"{len(mask_gaps)} candidate vertex(es), mask_default={mask_default}",
             )
         core_facade.write_mask_dict(res_mask)
 
@@ -625,7 +709,7 @@ def execute_mirror_pipeline(core_facade):
             axis=axis,
             direction=direction,
         )
-        if fill_gaps and weight_gaps:
+        if weight_gaps:
             _fill_weight_gaps(
                 layer_int, res_layer_int, weight_gaps, id_pairs,
                 vertex_coords, axis_idx, fill_surface, locks_by_id,
@@ -634,6 +718,15 @@ def execute_mirror_pipeline(core_facade):
                 "feature_domains",
                 f"mirror.execute_mirror_pipeline(): weight gap-fill covered "
                 f"{len(weight_gaps)} candidate vertex(es)",
+            )
+        center_touched = _symmetrize_center_vertices(
+            res_layer_int, id_pairs, vertex_coords, axis_idx, locks_by_id,
+        )
+        if center_touched:
+            CoreFacade.debug_log(
+                "feature_domains",
+                f"mirror.execute_mirror_pipeline(): center-seam symmetrize forced "
+                f"50/50 on {len(center_touched)} vertex(es)",
             )
         changed_verts = sum(
             1 for v_idx, w in res_layer_int.items() if w != layer_int.get(v_idx)

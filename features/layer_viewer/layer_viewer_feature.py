@@ -51,7 +51,7 @@ class LayerViewerFeature(UnifiedFeatureExtension):
         if "ss_layers_meta" not in obj.data:
             box.label(text="Enter Edit Mode to initialize layers", icon='INFO')
             return
-        ui.draw_layer_list(box, context, rows=8)
+        ui.draw_layer_list(box, context, rows=5)
         box.separator(factor=0.4)
         row = box.row()
         row.scale_y = 1.4

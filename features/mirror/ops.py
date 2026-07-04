@@ -29,16 +29,15 @@ class OBJECT_OT_MirrorWeights(bpy.types.Operator):
     def execute(self, context):
         facade = CoreFacade(context)
         try:
-            is_mask = facade.is_mask_context()
-            both_data = MirrorPreferencesService.get_mirror_both_data()
-            do_mask = is_mask or both_data
-            do_layer = (not is_mask) or both_data
+            mirror_data = MirrorPreferencesService.get_mirror_data()
+            do_mask = mirror_data in ('MASK', 'BOTH')
+            do_layer = mirror_data in ('BONE', 'BOTH')
 
             if do_layer:
                 # Pre-check whether the bone-weight channel has any pairs to
-                # mirror. When both_data is on, a missing bone side used to
-                # fail completely silently (the mask channel would still
-                # succeed, so the operator returned FINISHED with no
+                # mirror. When mirroring both channels, a missing bone side
+                # used to fail completely silently (the mask channel would
+                # still succeed, so the operator returned FINISHED with no
                 # feedback) — now it reports a WARNING but still lets the
                 # mask channel mirror. Bone-only mirrors still CANCEL as
                 # before, since nothing at all would happen.

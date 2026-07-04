@@ -20,22 +20,27 @@
 
 /// Flat-array mirror apply for mask-only mode.
 ///
-/// `target_side_mask[v_idx]` is a **precomputed** side classification (see
-/// `mirror_logic::rust_mirror_apply`'s doc comment for why this replaced a
-/// raw coordinate-sign test — a self-intersecting mesh can otherwise
-/// misclassify a vertex's side). `axis` is still used for the purely
-/// geometric mirrored-coordinate computation below.
+/// Deliberately kept on the original raw coordinate-sign test (unlike
+/// `mirror_logic::rust_mirror_apply`'s `target_side_mask`) — the
+/// topology-based classification was confirmed to badly misclassify most of
+/// a complex character mesh's mask coverage (only a small, simple region
+/// like the feet came out right; gap-fill was silently papering over the
+/// rest). The weight channel's classification fix stays; the mask channel
+/// keeps this self-contained raw coordinate test — see
+/// `features/mirror/README.md`'s guardrail: the two channels must never
+/// share a side-classification helper again.
 ///
 /// Returns `(mask_weights, gap_verts)` — `gap_verts` lists every target-side
-/// vertex still at the "unset" sentinel after the nearest-vertex pass below,
+/// vertex still at the "unset" sentinel after the nearest-vertex pass below
+/// (e.g. asymmetric topology with no source match within `kd_tolerance`),
 /// for the Python caller to fill via a BVH surface fallback (mirrors the
-/// gap contract of `mirror_logic::rust_mirror_apply`).
+/// gap contract of `mirror_logic::rust_mirror_apply`, but computed from this
+/// function's own local `is_target_side`, not any shared classification).
 pub fn flat_mirror_apply_mask(
     mut mask_weights: Vec<f64>,
     vertex_coords: &[(f64, f64, f64)],
-    target_side_mask: &[bool],
     axis: &str,
-    _direction: &str,
+    direction: &str,
 ) -> (Vec<f64>, Vec<i64>) {
     let num_verts = mask_weights.len();
     let axis_idx = match axis {
@@ -45,8 +50,24 @@ pub fn flat_mirror_apply_mask(
         _ => 1,
     };
 
-    let is_target = |v_idx: usize| -> bool {
-        target_side_mask.get(v_idx).copied().unwrap_or(false)
+    let is_source_side = |coord: &(f64, f64, f64)| -> bool {
+        let val = [coord.0, coord.1, coord.2][axis_idx];
+        let eps = 1e-5;
+        if direction == "POS_NEG" {
+            val >= -eps
+        } else {
+            val <= eps
+        }
+    };
+
+    let is_target_side = |coord: &(f64, f64, f64)| -> bool {
+        let val = [coord.0, coord.1, coord.2][axis_idx];
+        let eps = 1e-5;
+        if direction == "POS_NEG" {
+            val < -eps
+        } else {
+            val > eps
+        }
     };
 
     let kd_tolerance = 0.05f64;
@@ -56,7 +77,7 @@ pub fn flat_mirror_apply_mask(
         if v_idx >= vertex_coords.len() {
             break;
         }
-        if is_target(v_idx) {
+        if is_target_side(&vertex_coords[v_idx]) {
             mask_weights[v_idx] = -1.0; // sentinel = clear
         }
     }
@@ -67,10 +88,10 @@ pub fn flat_mirror_apply_mask(
         if v_idx >= vertex_coords.len() {
             break;
         }
-        if is_target(v_idx) {
+        let coord = &vertex_coords[v_idx];
+        if !is_source_side(coord) {
             continue;
         }
-        let coord = &vertex_coords[v_idx];
         let src_val = old_mask[v_idx];
         if src_val <= -0.5 {
             continue;
@@ -88,7 +109,7 @@ pub fn flat_mirror_apply_mask(
             if tgt_idx >= vertex_coords.len() {
                 break;
             }
-            if !is_target(tgt_idx) {
+            if !is_target_side(&vertex_coords[tgt_idx]) {
                 continue;
             }
             let tc = &vertex_coords[tgt_idx];
@@ -113,7 +134,7 @@ pub fn flat_mirror_apply_mask(
         if v_idx >= vertex_coords.len() {
             break;
         }
-        if !is_target(v_idx) {
+        if !is_target_side(&vertex_coords[v_idx]) {
             continue;
         }
         if mask_weights[v_idx] <= -0.5 {

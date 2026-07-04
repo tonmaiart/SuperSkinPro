@@ -216,9 +216,9 @@ class PreferencesService:
         return MirrorPreferencesService.get_mirror_direction()
 
     @classmethod
-    def get_mirror_both_data(cls) -> bool:
+    def get_mirror_data(cls) -> str:
         from ...features.mirror.mirror_feature import MirrorPreferencesService
-        return MirrorPreferencesService.get_mirror_both_data()
+        return MirrorPreferencesService.get_mirror_data()
 
     @classmethod
     def get_mirror_search_replace_pairs(cls) -> list:

@@ -36,7 +36,7 @@
   "mirror": {
     "mirror_axis": "X",
     "direction": "POS_NEG",
-    "both_data": true,
+    "mirror_data": "BOTH",
     "search_replace_pairs": [
       ["*.l", "*.r"],
       ["*.L", "*.R"],

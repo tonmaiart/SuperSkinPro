@@ -57,32 +57,14 @@ class SSPrefMirror(bpy.types.PropertyGroup):
         default='POS_NEG',
         update=_on_changed,
     )
-    both_data: bpy.props.BoolProperty(
-        name="Mirror both layer and bone data",
-        description="This will mirror both layer and bone data at once.",
-        default=True,
-        update=_on_changed,
-    )
-    fill_gaps: bpy.props.BoolProperty(
-        name="Auto-Fill Gaps",
-        description=(
-            "When the nearest-vertex mirror pass can't find a matching vertex "
-            "within tolerance (asymmetric topology), fill the gap using a "
-            "closest-point-on-surface + barycentric blend, same approach as "
-            "Weight Transfer, instead of leaving it unweighted"
-        ),
-        default=True,
-        update=_on_changed,
-    )
-    warn_self_intersection: bpy.props.BoolProperty(
-        name="Warn on Self-Intersection",
-        description=(
-            "Before mirroring, check whether the mesh's own geometry already "
-            "crosses the mirror plane into where its mirrored copy will sit "
-            "(e.g. an oversized pant leg) and show a warning. Detection only "
-            "— never blocks or alters the mirror"
-        ),
-        default=True,
+    mirror_data: bpy.props.EnumProperty(
+        name="Mirror Data",
+        items=[
+            ('BONE', "Deform Bone", "Mirror only the deform-bone weight (layer) channel"),
+            ('MASK', "Layer Mask", "Mirror only the active layer's mask channel"),
+            ('BOTH', "Both", "Mirror both the deform-bone weight and layer mask channels"),
+        ],
+        default='BOTH',
         update=_on_changed,
     )
     search_replace_pairs:  bpy.props.CollectionProperty(type=SSPrefMirrorSRItem)
@@ -109,16 +91,8 @@ class MirrorPreferencesService:
         return cls._prefs().direction
 
     @classmethod
-    def get_mirror_both_data(cls) -> bool:
-        return cls._prefs().both_data
-
-    @classmethod
-    def get_mirror_fill_gaps(cls) -> bool:
-        return cls._prefs().fill_gaps
-
-    @classmethod
-    def get_mirror_warn_self_intersection(cls) -> bool:
-        return cls._prefs().warn_self_intersection
+    def get_mirror_data(cls) -> str:
+        return cls._prefs().mirror_data
 
     @classmethod
     def get_mirror_search_replace_pairs(cls) -> list:
@@ -164,9 +138,10 @@ class MirrorFeature(UnifiedFeatureExtension):
         row_axis = col_opts.split(factor=0.3, align=True)
         row_axis.label(text="Mirror Axis:")
         row_axis.prop(mirror, "mirror_axis", text="")
-        layout.prop(mirror, "both_data", toggle=False)
-        layout.prop(mirror, "fill_gaps", toggle=False)
-        layout.prop(mirror, "warn_self_intersection", toggle=False)
+        col_opts.separator(factor=0.5)
+        row_data = col_opts.split(factor=0.3, align=True)
+        row_data.label(text="Mirror Data:")
+        row_data.prop(mirror, "mirror_data", text="")
         layout.label(text="Mapping Keywords:")
         self._draw_sr_body(layout.box(), context, mirror)
         row_btn = layout.row()
@@ -203,9 +178,7 @@ class MirrorFeature(UnifiedFeatureExtension):
         mirror = bpy.context.window_manager.superskin_mirror_prefs
         mirror.mirror_axis = data.get("mirror_axis", "X")
         mirror.direction   = data.get("direction",   "POS_NEG")
-        mirror.both_data   = data.get("both_data",   True)
-        mirror.fill_gaps   = data.get("fill_gaps",   True)
-        mirror.warn_self_intersection = data.get("warn_self_intersection", True)
+        mirror.mirror_data = data.get("mirror_data", "BOTH")
 
         sr_coll = mirror.search_replace_pairs
         sr_coll.clear()
@@ -220,9 +193,7 @@ class MirrorFeature(UnifiedFeatureExtension):
         full_dict["mirror"] = {
             "mirror_axis": mirror.mirror_axis,
             "direction":   mirror.direction,
-            "both_data":   mirror.both_data,
-            "fill_gaps":   mirror.fill_gaps,
-            "warn_self_intersection": mirror.warn_self_intersection,
+            "mirror_data": mirror.mirror_data,
             "search_replace_pairs": [
                 [p.search_text, p.replace_text]
                 for p in mirror.search_replace_pairs

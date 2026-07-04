@@ -12,7 +12,7 @@ from . import logic
 from . import ops
 from . import mirror_feature
 
-for mod in (logic, ops, mirror_feature):
+for mod in (logic, mirror_feature, ops):
     try:
         reload(mod)
     except Exception:

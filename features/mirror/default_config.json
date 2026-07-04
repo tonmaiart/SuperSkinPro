@@ -1,9 +1,7 @@
 {
   "mirror_axis": "X",
   "direction": "POS_NEG",
-  "both_data": true,
-  "fill_gaps": true,
-  "warn_self_intersection": true,
+  "mirror_data": "BOTH",
   "search_replace_pairs": [
     ["*.l", "*.r"],
     ["*.L", "*.R"],
