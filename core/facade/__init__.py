@@ -125,17 +125,17 @@ class CoreFacade(ReadFacadeMixin, WriteFacadeMixin, VisualizerFacadeMixin):
 
     # ── Pipeline wrappers ─────────────────────────────────────────────
 
-    def _finish(self, *, color_only=False):
+    def _finish(self, *, color_only=False, dirty_verts=None):
         from ..ui_controller import pipeline
-        return pipeline.finish(self, color_only=color_only)
+        return pipeline.finish(self, color_only=color_only, dirty_verts=dirty_verts)
 
     def _flatten_to_mesh(self):
         from ..ui_controller import pipeline
         return pipeline.flatten_to_mesh(self)
 
-    def _flatten_to_mesh_edit(self):
+    def _flatten_to_mesh_edit(self, *, dirty_verts=None):
         from ..ui_controller import pipeline
-        return pipeline.flatten_to_mesh_edit(self)
+        return pipeline.flatten_to_mesh_edit(self, dirty_verts=dirty_verts)
 
     def _save_current_layer_state(self):
         from ..ui_controller import pipeline

@@ -10,6 +10,7 @@ Consolidated from:
 
 import bpy
 import json
+import time
 import traceback
 
 from ...core.facade import CoreFacade
@@ -184,6 +185,16 @@ _display_order_cache_key = None  # (mesh_name, arm_name, frozenset(deform_bone_n
 _influence_visible_cache = {}
 _influence_visible_cache_key = None  # (id(mesh_data), active_layer_idx, blob_hash)
 
+# Debounce window for the cache above: both its EDIT_TEMP key (ShaderManager
+# deform-generation counter) and its Object-Mode key (ss_layer_N blob hash)
+# change on every single completed weight write — including every applied
+# tick of a continuous weight-apply gesture, which can fire dozens of times
+# per second. A brief staleness window here is imperceptible for a
+# bone-influence display list and avoids a full mesh rescan (BMesh read +
+# int-cast + Rust call) on every gesture tick.
+_influence_visible_last_recompute_wall = 0.0
+_INFLUENCE_VISIBLE_DEBOUNCE_SECONDS = 0.2
+
 
 def _get_cached_display_order(arm_obj, deform_bones):
     """⚡ Retain cache mechanism exclusively for bone item sequencing order.
@@ -237,6 +248,7 @@ def _get_visible_influence_bones(context, data):
     absolute 'SuperSkinPro' references at lines 221-222).
     """
     global _influence_visible_cache, _influence_visible_cache_key
+    global _influence_visible_last_recompute_wall
 
     from ...core.layer_storage.temp_vg_bridge import has_temp_vgs, read_temp_vgs_from_bm
     from ...core.shaders.shader_manager import ShaderManager
@@ -252,6 +264,15 @@ def _get_visible_influence_bones(context, data):
         cache_key = (id(mesh_data), active_layer_idx, hash(raw_blob))
 
     if _influence_visible_cache_key == cache_key:
+        return set(_influence_visible_cache)
+
+    now = time.monotonic()
+    if (now - _influence_visible_last_recompute_wall) < _INFLUENCE_VISIBLE_DEBOUNCE_SECONDS:
+        # cache_key changed but the cache was refreshed only moments ago --
+        # deliberately leave _influence_visible_cache_key untouched (still
+        # the OLD key) so the very next call, once the debounce window has
+        # elapsed (e.g. right after a gesture releases), sees a mismatch
+        # again and performs one final, fully correct recompute.
         return set(_influence_visible_cache)
 
     storage = LayerStorageService(mesh_data)
@@ -296,6 +317,7 @@ def _get_visible_influence_bones(context, data):
 
     _influence_visible_cache = frozenset(visible_bones)
     _influence_visible_cache_key = cache_key
+    _influence_visible_last_recompute_wall = now
     return set(visible_bones)
 
 

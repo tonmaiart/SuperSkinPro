@@ -52,6 +52,12 @@ _GESTURE_LABELS = {
 
 _GESTURE_DRAG_THRESHOLD = 4  # pixels before a click becomes a drag (matches bone_picker's overlay-size gesture)
 _GESTURE_DRAG_SENSITIVITY = 1.0 / 300.0  # 300px horizontal drag spans 0 -> +-1.0
+_GESTURE_APPLY_INTERVAL = 1.0 / 60.0  # cap expensive apply+flatten ticks to ~60Hz, independent of raw MOUSEMOVE rate
+# Was 1/30 (~9ms measured compute in a 33ms budget, 27% duty cycle) -- after
+# the dirty_verts/caching optimizations landed, there's enough headroom to
+# double the tick rate (~54% duty cycle at 60Hz) for a smoother feel without
+# meaningfully raising CPU cost. Lower this back toward 1/30-1/20 if a much
+# larger/heavier scene pushes per-tick compute closer to the new budget.
 
 # Each combined gesture's `action` property spans a signed [-1.0, 1.0] drag
 # value starting at 0.0. The sign picks which of its two real domain actions
@@ -83,6 +89,16 @@ class SUPERSKIN_OT_weight_gesture(bpy.types.Operator):
     mesh; releasing commits the final value as a single write (one undo
     step). There is no mid-gesture cancel by design -- the only way back is
     Blender's native Ctrl+Z, never an ESC/cancel branch here.
+
+    MOUSEMOVE can fire far faster than the expensive apply+flatten path can
+    usefully keep up with (100+ Hz on some mice/tablets), so tracking the
+    drag value is decoupled from actually applying it: MOUSEMOVE only updates
+    `self._drag_value` (cheap arithmetic), and a modal TIMER event
+    (`_GESTURE_APPLY_INTERVAL`) is what actually triggers `_apply()`. This
+    bounds apply+flatten calls/sec to a fixed budget regardless of raw input
+    rate. RELEASE always applies once more unconditionally so the committed
+    result matches the last-seen mouse position exactly, even if it lands
+    between two timer ticks.
     """
     bl_idname = "superskin.weight_gesture"
     bl_label = "Weight Gesture"
@@ -121,10 +137,17 @@ class SUPERSKIN_OT_weight_gesture(bpy.types.Operator):
         self._initial_y = event.mouse_y
         self._is_dragging = False
         self._drag_value = 0.0
+        self._last_applied_value = None
 
         context.window.cursor_modal_set('NONE')
+        self._timer = context.window_manager.event_timer_add(
+            _GESTURE_APPLY_INTERVAL, window=context.window,
+        )
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
+
+    def _remove_timer(self, context):
+        context.window_manager.event_timer_remove(self._timer)
 
     def _apply(self, context, drag_value):
         """Resolve `drag_value` to a real action/intensity and run one
@@ -152,20 +175,32 @@ class SUPERSKIN_OT_weight_gesture(bpy.types.Operator):
                 # (that was the bug: recomputing `delta * sensitivity` fresh
                 # every frame capped the value at whatever a single event's
                 # movement could reach, ~0.03-0.04).
+                # NOTE: only the value is tracked here -- the expensive
+                # apply+flatten call is throttled to the TIMER tick below, not
+                # run on every MOUSEMOVE (see class docstring).
                 self._drag_value = max(-1.0, min(1.0, self._drag_value + delta * _GESTURE_DRAG_SENSITIVITY))
+                context.window.cursor_warp(self._initial_x, self._initial_y)
+
+        elif event.type == 'TIMER':
+            if self._is_dragging and self._drag_value != self._last_applied_value:
                 real_action, intensity = self._apply(context, self._drag_value)
+                self._last_applied_value = self._drag_value
                 context.area.header_text_set(
                     f"{_GESTURE_LABELS.get(real_action, real_action)}: {intensity:.2f}"
                 )
-                context.window.cursor_warp(self._initial_x, self._initial_y)
 
         elif event.type == self._trigger_type and event.value == 'RELEASE':
+            self._remove_timer(context)
             context.window.cursor_modal_restore()
             context.area.header_text_set(None)
             if not self._is_dragging:
                 # Plain click, never dragged -- no single-click apply anymore,
                 # so this is a pure no-op (no write, no undo step).
                 return {'CANCELLED'}
+            # Always apply once more unconditionally, even if _drag_value
+            # already matches _last_applied_value -- guarantees the committed
+            # result matches the last-seen mouse position exactly, regardless
+            # of where release lands relative to the last timer tick.
             self._apply(context, self._drag_value)
             return {'FINISHED'}
 

@@ -122,16 +122,75 @@ README/keymap.py for notes.
 
 ## 🔄 Edit-Mode Write Workflow
 
-`execute()` reads the active layer via `core_facade.read_active_layer()` and writes
-the result back via `core_facade.write_active_layer()`. In Edit Mode these route
-through the `__ssp_*` BMesh temp Vertex Groups, not `ss_layer_N` directly — every
-weight op therefore does two things on write: it updates the temp VGs (so Blender's
-native Undo tracks the step), and it flattens the composite of all layers (including
-the just-updated temp VG) onto the real deform Vertex Groups so the Armature Modifier
-and viewport update immediately. The permanent write-back to `ss_layer_N` only happens
-when the user presses Save Weight or exits Edit Mode — never on every brush/action
-call. See `core/facade/README.md` ("Mode-Aware Layer Read/Write") and
-`docs/bug-history/0016`, `0018`, `0019` for the underlying design.
+`execute()` / `apply_action()` read the snapshot baseline via `snapshot_context()`
+(`core_facade.read_active_layer()` et al., taken once per gesture/click) and write
+the result back via one of three paths depending on context, all in `apply_action()`:
+
+- **Mask mode**: `ctrl._write_active_layer_string(full_layer_int, id_to_bone, full_mask, is_mask_mode=True, dirty_verts=dirty_verts)` + `core_facade.finish(color_only=True, dirty_verts=dirty_verts)`.
+- **EDIT mode (non-mask, the gesture's hot path)**: `core_facade.write_active_layer_from_calc(full_layer_int, id_to_bone, dirty_verts=dirty_verts, mask_override=mask_dict)` — takes Rust's int-keyed output directly (skips the int→string→int round-trip `write_active_layer()` does) and already flattens + redraws inline, so no separate `finish()` call.
+- **Object mode**: `core_facade.write_active_layer(res_layer_str, color_only=True, dirty_verts=dirty_verts)` — Object-Mode's `write_active_layer_from_calc()` branch only persists to storage without flattening, so this path keeps the slower string round-trip (which calls `finish()` internally).
+
+In Edit Mode these route through the `__ssp_*` BMesh temp Vertex Groups, not
+`ss_layer_N` directly — every weight op therefore does two things on write: it
+updates the temp VGs (so Blender's native Undo tracks the step), and it flattens the
+composite of all layers (including the just-updated temp VG) onto the real deform
+Vertex Groups so the Armature Modifier and viewport update immediately. The permanent
+write-back to `ss_layer_N` only happens when the user presses Save Weight or exits
+Edit Mode — never on every brush/action call. See `core/facade/README.md`
+("Mode-Aware Layer Read/Write") and `docs/bug-history/0016`, `0018`, `0019` for the
+underlying design.
+
+## ⚡ Gesture Performance: `dirty_verts` and the Rust FFI Path
+
+The modal gesture (`SUPERSKIN_OT_weight_gesture`) applies on a `TIMER` event
+throttled to `_GESTURE_APPLY_INTERVAL` (currently `1.0/60.0`) in `ops.py`, not
+on every raw `MOUSEMOVE` — `MOUSEMOVE` only accumulates `self._drag_value`
+(cheap arithmetic); the timer is what actually calls `_apply()`.
+
+Each `apply_action()` call computes `dirty_verts` — always a superset of
+`selected`, widened for `smooth`/`sharpen` by the exact same `neighbors` dict
+already being passed to the Rust call (never a separately re-derived
+approximation, so it cannot under-cover what Rust actually changes).
+`dirty_verts` is threaded into every write call above and further down into
+`core/facade/write.py`, `core/ui_controller/pipeline.py::flatten_to_mesh_edit()`,
+and `core/layer_storage/temp_vg_bridge.py`, restricting their BMesh scans and
+compositor recomputation to only vertices this tick could have touched
+instead of the whole mesh. Only the vertex-**iteration** is restricted this
+way — the compositor's active-layer input itself (via `active_layer_override`)
+must always be the complete, current layer, never a `dirty_verts`-trimmed
+one, or vertices outside `dirty_verts` would look like they have zero weight
+and get silently zeroed (this exact bug was hit and fixed once already).
+
+The Rust-bound payload for `apply_add`/`apply_scale`/`apply_smooth`/
+`apply_sharpen` (`layer_int_for_rust`/`mask_dict_for_rust`) is trimmed to
+`dirty_verts` — safe because every `rust_*_logic` function's write set is
+exactly `selected`, and reads outside `selected` are only neighbor lookups
+`dirty_verts` already guarantees are present. Rust's return is deliberately
+named `res_layer_diff`/`res_mask_diff` (never `res_layer`/`res_mask`) and
+merged into a separately-built `full_layer_int`/`full_mask` before any
+downstream write — passing the small diff anywhere a complete dict is
+expected reproduces the "untouched vertex's color goes black" bug.
+
+The layer compositor itself (`core_subsystems/layer_compositor/codec.py`,
+`rust_logic/src/layer_compositor.rs`) has a flat-array (COO) FFI path
+(`rust_composite_layers_mixed`) for non-active visible layers, used only
+when `hasattr(rust.module, "rust_composite_layers_mixed")` — older compiled
+`rust_logic.so` binaries transparently keep using the original dict-based
+`rust_composite_layers` until rebuilt. Real profiling showed this rewrite's
+win is small in practice (PyO3 still deep-copies array data on every call
+regardless of Python-side caching), since the true remaining cost is
+re-marshaling large, unchanged non-active layers across the FFI every tick —
+see `core_subsystems/layer_compositor/codec.py` for the current state of
+this investigation before assuming this path is "fast."
+
+A related, previously-hidden cost: `interface/utils/utils.py::_get_visible_influence_bones()`
+(used by the Deform Bone Viewer panel) used to fully rescan the mesh on
+every single gesture tick, because its cache key included
+`ShaderManager.get_deform_generation()`, bumped on every completed weight
+write. It now has a `_INFLUENCE_VISIBLE_DEBOUNCE_SECONDS` (`0.2s`) debounce
+window so a continuous gesture doesn't force a full mesh rescan every tick —
+see that file for details; not specific to this domain, but directly
+triggered by this domain's write-every-tick behavior.
 
 `layer_int` is built only over `layer_str.items()` (vertices with existing weight),
 not the full mesh vertex range — the Rust smoothing/sharpening functions already

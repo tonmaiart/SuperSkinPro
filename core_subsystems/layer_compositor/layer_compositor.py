@@ -228,9 +228,17 @@ class LayerCompositor:
     # =========================================================================
 
     @classmethod
-    def composite_layers(cls, meta_list, layer_data_map, mask_data_map, idx_to_name, num_verts):
-        """Composite all visible layers via the native Rust core."""
-        return _composite_layers(meta_list, layer_data_map, mask_data_map, idx_to_name, num_verts)
+    def composite_layers(cls, meta_list, layer_data_map, mask_data_map, idx_to_name, num_verts,
+                         dirty_verts=None):
+        """Composite all visible layers via the native Rust core.
+
+        Args:
+            dirty_verts: optional iterable of vertex indices to restrict
+                recomputation to. See codec._composite_layers()'s docstring
+                for the full contract and the rust_logic rebuild requirement.
+        """
+        return _composite_layers(meta_list, layer_data_map, mask_data_map, idx_to_name, num_verts,
+                                 dirty_verts=dirty_verts)
 
     @classmethod
     def merge_selected(cls, meta_list, layer_data_map, mask_data_map,

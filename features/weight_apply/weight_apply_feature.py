@@ -13,9 +13,11 @@ Owns:
 
 import bpy
 import os
+import time
 
 from ...interface.registry.register_api import UnifiedFeatureExtension, UnifiedRegistry
 from ...core.facade import CoreFacade
+from ...core_subsystems.debug_logging import DebugLogService
 
 _DEFAULTS_PATH = os.path.join(os.path.dirname(__file__), "default_config.json")
 
@@ -145,14 +147,63 @@ class WeightApplyFeature(UnifiedFeatureExtension):
         id_to_bone = ctx["id_to_bone"]
         selected = ctx["selected"]
         locks_id = ctx["locks_id"]
-        layer_int = {v: dict(w) for v, w in ctx["layer_int"].items()}
+
+        # dirty_verts: every vertex this tick's write could possibly touch --
+        # always a superset of `selected`, widened for smooth/sharpen by
+        # whichever neighbor set Rust is about to read below. Built from the
+        # exact same `neighbors` dict used for the Rust call, never a
+        # separately re-derived approximation, so it can't under-cover what
+        # Rust actually changes. Passed to the write calls below to let the
+        # core flatten pipeline skip full-mesh BMesh scans on this hot path.
+        dirty_verts = set(selected)
+        neighbors = None
+        if action == "smooth":
+            if p.smooth_across_surface:
+                neighbors = build_surface_neighbors(core_facade, selected)
+            else:
+                neighbors = core_facade.get_cached_mesh_neighbors()
+        elif action == "sharpen":
+            neighbors = build_surface_neighbors(
+                core_facade, selected, radius_multiplier=SHARPEN_RADIUS_MULTIPLIER,
+            )
+        if neighbors is not None:
+            for v in selected:
+                dirty_verts.update(neighbors.get(v, ()))
+
+        # Only feed Rust the vertices it could possibly touch (dirty_verts) --
+        # every rust_*_logic function's write set is exactly `selected`, and
+        # its only reads outside `selected` are neighbor lookups (sharpen/
+        # smooth) that dirty_verts already guarantees are present. This keeps
+        # the Python<->Rust FFI marshaling cost proportional to brush size,
+        # not total painted-vertex count on the mesh.
+        #
+        # CRITICAL: the return values are named `res_layer_diff`/`res_mask_diff`
+        # (never `res_layer`/`res_mask`) specifically so it's structurally
+        # obvious they are NOT a complete active-layer snapshot -- merge them
+        # into `full_layer_int` below and use ONLY that downstream. Passing
+        # the small diff anywhere a complete dict is expected reproduces the
+        # exact "untouched vertex's weight-paint color goes black" bug
+        # already hit and fixed once this session (see git history / prior
+        # session notes on write_layer_to_temp_vgs_bm's "absence = clear"
+        # semantics, and flatten_to_mesh_edit()'s active_layer_override
+        # contract, and ss_layer_N's direct-persistence path -- all three
+        # require the complete layer, not a subset).
+        layer_int_for_rust = {v: dict(ctx["layer_int"].get(v, {})) for v in dirty_verts}
+        mask_dict_for_rust = {v: ctx["mask_dict"][v] for v in dirty_verts if v in ctx["mask_dict"]}
         mask_dict = dict(ctx["mask_dict"])
+
+        # Profiling: gated by the same lazy-guard pattern as debug logging --
+        # time.perf_counter() calls themselves are cheap, but keep this
+        # opt-in (enable the "feature_domains" debug category in Preferences
+        # to see per-tick ms in the console) rather than always-on.
+        _profile = DebugLogService.is_enabled("feature_domains")
+        _t0 = time.perf_counter() if _profile else None
 
         if action == "add":
             if active_vg_id is None and not is_mask:
                 return {"status": "CANCELLED", "message": "No active bone"}
-            res_layer, res_mask = apply_add(
-                layer_int, mask_dict, selected,
+            res_layer_diff, res_mask_diff = apply_add(
+                layer_int_for_rust, mask_dict_for_rust, selected,
                 active_vg_id if active_vg_id is not None else -1,
                 intensity, locks_id,
                 core_facade.get_active_layer_index(), is_mask,
@@ -161,19 +212,15 @@ class WeightApplyFeature(UnifiedFeatureExtension):
         elif action == "scale":
             if active_vg_id is None and not is_mask:
                 return {"status": "CANCELLED", "message": "No active bone"}
-            res_layer, res_mask = apply_scale(
-                layer_int, mask_dict, selected,
+            res_layer_diff, res_mask_diff = apply_scale(
+                layer_int_for_rust, mask_dict_for_rust, selected,
                 active_vg_id if active_vg_id is not None else -1,
                 intensity, locks_id, is_mask,
             )
 
         elif action == "smooth":
-            if p.smooth_across_surface:
-                neighbors = build_surface_neighbors(core_facade, selected)
-            else:
-                neighbors = core_facade.get_cached_mesh_neighbors()
-            res_layer, res_mask = apply_smooth(
-                layer_int, mask_dict, selected,
+            res_layer_diff, res_mask_diff = apply_smooth(
+                layer_int_for_rust, mask_dict_for_rust, selected,
                 neighbors,
                 intensity, locks_id,
                 p.smooth_affected_only if affected_only is None else affected_only,
@@ -183,11 +230,8 @@ class WeightApplyFeature(UnifiedFeatureExtension):
         elif action == "sharpen":
             if active_vg_id is None and not is_mask:
                 return {"status": "CANCELLED", "message": "No active bone"}
-            neighbors = build_surface_neighbors(
-                core_facade, selected, radius_multiplier=SHARPEN_RADIUS_MULTIPLIER,
-            )
-            res_layer, res_mask = apply_sharpen(
-                layer_int, mask_dict, selected,
+            res_layer_diff, res_mask_diff = apply_sharpen(
+                layer_int_for_rust, mask_dict_for_rust, selected,
                 neighbors,
                 active_vg_id if active_vg_id is not None else -1,
                 intensity, is_mask,
@@ -196,25 +240,64 @@ class WeightApplyFeature(UnifiedFeatureExtension):
         else:
             return {"status": "CANCELLED", "message": f"Unknown action: {action}"}
 
+        if _profile:
+            _t_rust = time.perf_counter()
+
+        # Merge the small Rust diff into a full copy of the baseline -- this
+        # (not res_layer_diff) is what every downstream consumer below uses.
+        full_layer_int = {v: dict(w) for v, w in ctx["layer_int"].items()}
+        full_layer_int.update(res_layer_diff)
+
+        if _profile:
+            _t_merge = time.perf_counter()
+
         if is_mask:
             # Merge the Rust-modified vertices back into the full baseline mask so
             # non-selected vertices keep their existing mask values.  Rust returns
-            # only the selected vertices in res_mask; writing it directly would clear
-            # every other vertex's mask to 0.
+            # only the selected vertices in res_mask_diff; writing it directly
+            # would clear every other vertex's mask to 0.
             full_mask = dict(ctx["mask_dict"])
-            full_mask.update(res_mask)
+            full_mask.update(res_mask_diff)
             # Use the ctrl escape with is_mask_mode=True to bypass the bone
             # normalization loop, which would otherwise prune unselected vertices.
             ctrl = core_facade.get_ctrl()
-            ctrl._write_active_layer_string(res_layer, id_to_bone,
-                                            full_mask, is_mask_mode=True)
-            core_facade.finish(color_only=True)
+            ctrl._write_active_layer_string(full_layer_int, id_to_bone,
+                                            full_mask, is_mask_mode=True,
+                                            dirty_verts=dirty_verts)
+            core_facade.finish(color_only=True, dirty_verts=dirty_verts)
+        elif core_facade.get_obj().mode == 'EDIT':
+            # write_active_layer_from_calc() takes Rust's int-keyed output
+            # directly, skipping the int->string->int round-trip
+            # write_active_layer() would otherwise do, and already flattens +
+            # redraws inline for EDIT mode -- no separate finish() call needed
+            # (calling one here would flatten a second time).
+            # mask_override=mask_dict: non-mask actions never modify the mask
+            # (Rust only mutates it when is_mask_mode=True), so this tick's
+            # mask_dict is still the correct, current one -- passing it lets
+            # the compositor skip re-reading it from the BMesh too.
+            core_facade.write_active_layer_from_calc(
+                full_layer_int, id_to_bone, dirty_verts=dirty_verts, mask_override=mask_dict,
+            )
         else:
+            # write_active_layer_from_calc()'s Object-Mode branch only saves
+            # to storage and does not flatten/redraw, so Object Mode keeps the
+            # slower string round-trip path (which calls finish() internally).
             res_layer_str = {
                 v_idx: {id_to_bone[b]: w for b, w in weights.items() if b in id_to_bone}
-                for v_idx, weights in res_layer.items()
+                for v_idx, weights in full_layer_int.items()
             }
-            core_facade.write_active_layer(res_layer_str, color_only=True)
+            core_facade.write_active_layer(res_layer_str, color_only=True, dirty_verts=dirty_verts)
+
+        if _profile:
+            _t_write = time.perf_counter()
+            DebugLogService.log(
+                "feature_domains",
+                f"apply_action({action!r}) dirty_verts={len(dirty_verts)}: "
+                f"rust={1000 * (_t_rust - _t0):.2f}ms "
+                f"merge={1000 * (_t_merge - _t_rust):.2f}ms "
+                f"write={1000 * (_t_write - _t_merge):.2f}ms "
+                f"total={1000 * (_t_write - _t0):.2f}ms",
+            )
 
         return {"status": "FINISHED"}
 

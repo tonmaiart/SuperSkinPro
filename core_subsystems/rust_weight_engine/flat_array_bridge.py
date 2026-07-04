@@ -84,6 +84,102 @@ def layer_to_csr(
     return offsets, bone_ids, weights
 
 
+def build_local_bone_ids(layer_int: dict) -> Tuple[dict, dict]:
+    """Build a call-scoped ``bone_name <-> int_id`` mapping from the distinct
+    bone names appearing in one decoded layer dict.
+
+    Deliberately NOT borrowed from any object-wide mapping (e.g.
+    ``get_unified_mapping()``/``get_local_mapping()``) -- those are keyed by
+    the live ``vertex_groups`` collection and are unstable across VG
+    add/remove, and some callers (layer merge) can reference orphan bone
+    names with no current VG at all. This mapping only needs to be
+    self-consistent for the lifetime of a single caller's use of it (e.g.
+    one compositor call), covering exactly whatever bone names are actually
+    present in *this* layer dict -- including orphans, since it derives
+    from the data itself, not from live scene state.
+
+    Args:
+        layer_int: ``{v_idx: {bone_name: weight}}`` -- a single decoded layer.
+
+    Returns:
+        ``(bone_to_id, id_to_bone)`` -- ``id_to_bone`` keys are small
+        sequential ints starting at 0 (typically tens of entries, one per
+        distinct bone name in this layer).
+    """
+    names = set()
+    for bone_weights in layer_int.values():
+        names.update(bone_weights.keys())
+    id_to_bone = dict(enumerate(sorted(names)))
+    bone_to_id = {name: i for i, name in id_to_bone.items()}
+    return bone_to_id, id_to_bone
+
+
+def layer_to_coo_sparse(
+    layer_int: dict,
+    bone_to_id: dict,
+    *,
+    dtype_vert_ids: str = "I",  # unsigned int (u32)
+    dtype_bone_ids: str = "i",  # signed int (i32)
+    dtype_weights: str = "d",   # double (f64)
+) -> Tuple[array.array, array.array, array.array]:
+    """Convert ``{v_idx: {bone_name: weight}}`` to flat COO (coordinate-list)
+    arrays, using a caller-supplied LOCAL ``bone_to_id`` mapping (see
+    ``build_local_bone_ids()``) instead of object-wide vertex-group indices.
+
+    Unlike ``layer_to_csr()`` above (which assumes a dense ``0..num_verts``
+    range and is O(num_verts) regardless of how sparse the layer actually
+    is), this iterates only ``layer_int``'s own keys -- O(actual entries),
+    safe and efficient for a layer that only touches a small fraction of a
+    large mesh. There is no ``vertex_offsets`` array in this format: instead,
+    ``vert_ids[i]`` names which vertex ``bone_ids[i]``/``weights[i]`` belong
+    to, with each vertex's bone count contributing that many rows (a vertex
+    with zero entries in ``layer_int`` simply never appears in ``vert_ids``
+    at all -- this "absence means no entries" contract must be preserved
+    exactly by whatever reconstructs the nested dict on the Rust side; see
+    ``coo_layer_to_hashmap()`` in ``rust_logic/src/layer_compositor.rs``).
+
+    Args:
+        layer_int: ``{v_idx: {bone_name: weight}}`` -- a single decoded layer.
+        bone_to_id: ``{bone_name: int_id}``, from ``build_local_bone_ids()``
+            on this SAME ``layer_int`` -- using a mapping built from a
+            different layer's bone names would silently drop or
+            misattribute entries.
+
+    Returns:
+        ``(vert_ids, bone_ids, weights)`` as parallel ``array.array``
+        objects, all the same length (total vertex-bone weight entries in
+        ``layer_int``).
+    """
+    total_entries = sum(len(w) for w in layer_int.values())
+
+    vert_ids = array.array(dtype_vert_ids, [0]) * total_entries
+    bone_ids = array.array(dtype_bone_ids, [0]) * total_entries
+    weights = array.array(dtype_weights, [0.0]) * total_entries
+
+    cursor = 0
+    for v_idx, bone_weights in layer_int.items():
+        v_int = int(v_idx)
+        for bone_name, w in bone_weights.items():
+            b_id = bone_to_id.get(bone_name)
+            if b_id is None:
+                continue
+            vert_ids[cursor] = v_int
+            bone_ids[cursor] = b_id
+            weights[cursor] = float(w)
+            cursor += 1
+
+    if cursor != total_entries:
+        # A bone name absent from bone_to_id was skipped -- shrink the
+        # arrays to the actual entry count rather than leaving trailing
+        # zeroed rows (which would silently fabricate a fake vertex-0 /
+        # bone-0 / weight-0.0 entry that was never in the source data).
+        vert_ids = vert_ids[:cursor]
+        bone_ids = bone_ids[:cursor]
+        weights = weights[:cursor]
+
+    return vert_ids, bone_ids, weights
+
+
 def csr_to_layer(
     vertex_offsets: Sequence[int],
     bone_ids: Sequence[int],

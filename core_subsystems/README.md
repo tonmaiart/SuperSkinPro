@@ -39,7 +39,7 @@ exposing a new submodule.
 
 | Package | Public Class | Responsibility |
 |---------|-------------|----------------|
-| `rust_weight_engine/` | `RustWeightEngine` | Rust binary loader, FFI dispatch, data-bridge conversions, flat CSR array bridge |
+| `rust_weight_engine/` | `RustWeightEngine` | Rust binary loader, FFI dispatch, data-bridge conversions, flat CSR/COO array bridge |
 | `layer_compositor/` | `LayerCompositor` | Layer metadata CRUD, compositing, topology healing, merge, flatten pipeline helpers |
 | `topology_cache_manager/` | `TopologyCacheManager` | VG-index mapping cache, mesh-neighbor topology, bone proximity ordering |
 | `context_selection_service/` | `ContextSelectionService` | Viewport selection, mask-context detection, undo-restore flag, weight normalisation |

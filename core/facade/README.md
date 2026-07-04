@@ -86,11 +86,12 @@ Both sub-steps happen inside the same Python call (`write_active_layer()` perfor
 - **Returns:** `{ v_idx (int): { bone_name (str): weight (float) } }`
 - **Side effect:** Caches the unified bone mapping on the instance for a paired `write_active_layer()` call (avoids a second VG scan).
 
-### `write_active_layer(layer_str: dict, *, color_only: bool = True)`
+### `write_active_layer(layer_str: dict, *, color_only: bool = True, dirty_verts: set = None)`
 - **Description:** Writes a string-keyed layer dict to the correct target for the current mode, then calls `finish()`. Edit Mode: writes to `__ssp_*` BMesh temp VGs (Update Temp VG), then `finish()` flattens all visible layers onto the real deform VGs (Flatten to Real VG) — see the two-sub-step note above. Object Mode: writes straight to `ss_layer_N`. Also re-merges orphan entries and prunes zero-weight bones.
 - **Input:** `{ v_idx (int): { bone_name (str): weight (float) } }`
 - **Requires:** `read_active_layer()` should have been called first on this instance so the bone mapping cache is populated.
 - **Mask note:** This method writes weight data only. It calls the internal write path with no mask payload (`None`) — it must never be passed an empty dict `{}` in place of "no mask data," since the underlying Edit-Mode writer treats `{}` as "the mask is now empty everywhere" and clears it. See `docs/bug-history/0020`.
+- **`dirty_verts`:** Optional vertex-index subset, forwarded to `finish()`. For hot paths (e.g. a modal weight-painting gesture) that know exactly which vertices could possibly have changed since the last call, this restricts internal BMesh scans/compositor recomputation to that subset instead of the whole mesh. `None` (default) preserves original full-mesh behavior exactly. **Only restricts iteration** — `layer_str` itself must still be the caller's complete, current picture of the layer; passing a `dirty_verts`-trimmed `layer_str` here (rather than a complete one with a separate `dirty_verts` hint) will silently treat every vertex outside the trim as having zero weight and corrupt the layer. See `features/weight_apply/README.md` ("Gesture Performance") for the concrete usage this was built for.
 
 ### `mutate_active_layer(*, color_only: bool = True) -> contextmanager`
 - **Description:** Read-modify-write transaction for the active layer's weight data. `with facade.mutate_active_layer() as layer_data:` yields the dict from `read_active_layer()` for in-place mutation; on a clean exit it commits via `write_active_layer()` (mode-aware write + `finish()`). On an exception inside the block, nothing is written.
@@ -128,18 +129,24 @@ Both sub-steps happen inside the same Python call (`write_active_layer()` perfor
 - **Description:** Commits a mask dictionary back to the active layer mask slot.
 - **Input Format:** `{ v_idx (int): mask_value (float) }`
 
-### `finish(*, color_only: bool = False)`
+### `finish(*, color_only: bool = False, dirty_verts: set = None, active_layer_override: dict = None, mask_override: dict = None)`
 - **Description:** Macro call that reflattens storage layers to mesh vertex groups, updates tags, bumps deform generation, and schedules a visualizer redraw.
 - **Parameters:** Set `color_only=True` for performance wins during rapid brush strokes when topology is untouched.
+- **`dirty_verts`:** Optional vertex-index subset (EDIT mode only). Restricts the post-composite BMesh write loop to this subset instead of the whole mesh — for hot paths that know exactly which vertices this call could have changed. `None` (default) preserves full-mesh behavior. **Never** restricts the compositor's own input (see `active_layer_override` below) — only the final write-back iteration.
+- **`active_layer_override`:** Optional `{ v_idx (int): { bone_name (str): weight (float) } }`, EDIT mode only. When given, skips the BMesh read that would normally build the active layer's compositor input, using this dict directly instead. Safe **only** when the caller can guarantee this dict is the complete, current, up-to-date active-layer state (e.g. a modal operator holding Blender's modal lock for its whole duration, with this exact data already computed). A `dirty_verts`-trimmed dict passed here will make every vertex outside the trim look like it has zero active-layer weight to the compositor, and get silently zeroed in the flattened result. `None` (default) preserves the original BMesh-read behavior.
+- **`mask_override`:** Companion to `active_layer_override` for the active layer's mask (`{ v_idx (int): mask_value (float) }`). Only consulted when `active_layer_override` is given. `None`/omitted means "no mask data for this layer."
 
 ### `finish_color_only()`
 - **Description:** Shorthand convenience wrapper for `finish(color_only=True)`.
 
-### `write_active_layer_from_calc(layer_int: dict, id_to_bone: dict)`
+### `write_active_layer_from_calc(layer_int: dict, id_to_bone: dict, *, dirty_verts: set = None, mask_override: dict = None)`
 - **Description:** Writes an integer-keyed layer dict (the direct output of a Rust computation) to the correct target for the current mode. Converts int-keyed data to string format via `data_bridge`, prunes zero bones, then routes through BMesh temp VGs in EDIT mode or `ss_layer_N` outside it.
 - **Input Format:** `layer_int: { v_idx (int): { vg_index (int): weight (float) } }`, `id_to_bone: { vg_index (int): bone_name (str) }`
-- **Notes:** Does NOT call `finish()`. The caller is responsible for calling `finish()` or `finish_color_only()` after all writes are complete. Handles weight writes only — does not process mask dicts or orphan re-merging.
-- **Usage:** Preferred for Rust-backed domains (smooth, sharpen, auto-block) where data is already in int-keyed FFI format, eliminating the redundant string→int→string round-trip of `write_active_layer()`.
+- **`layer_int` must always be the COMPLETE, current active-layer dict** — never trimmed by the caller, even when `dirty_verts` is supplied. This method trims internally (converting only the `dirty_verts` subset to string-keyed form for the EDIT+temp-VG hot path) but requires the full dict as input to do that trimming correctly; the Object-Mode/`ss_layer_N` persistence fallthrough always needs and uses the complete dict regardless of `dirty_verts`.
+- **`dirty_verts`:** Optional vertex-index subset. Restricts the EDIT-mode hot path's string-conversion and `finish()`'s post-composite write loop to this subset. `None` (default) preserves full-mesh behavior.
+- **`mask_override`:** Optional `{ v_idx (int): mask_value (float) }`, forwarded to `finish()`'s `active_layer_override` companion. This method never writes mask data itself, so pass the active layer's current (unchanged) mask here to let the compositor skip re-reading it from the BMesh. `None` (default) means "no mask data for this layer."
+- **Notes:** Does NOT call `finish()` separately — it calls it internally as part of the EDIT-mode dual-update (temp VGs + real-VG flatten). Handles weight writes only — does not process mask dicts (beyond the `mask_override` passthrough above) or orphan re-merging.
+- **Usage:** Preferred for Rust-backed domains (smooth, sharpen, auto-block, the weight-apply gesture) where data is already in int-keyed FFI format, eliminating the redundant string→int→string round-trip of `write_active_layer()`.
 
 ---
 

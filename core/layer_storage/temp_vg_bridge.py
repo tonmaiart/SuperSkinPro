@@ -184,6 +184,13 @@ def read_temp_vgs_from_bm(bm, obj) -> tuple:
     are immediately visible without an update_from_editmode() round-trip.
     Use this whenever the caller already holds the active edit BMesh.
 
+    Always scans every vertex -- callers that feed this into a layer
+    compositor need the complete active-layer picture, since a partial scan
+    would make untouched vertices look like they have zero weight to
+    whatever consumes the result. See core/ui_controller/pipeline.py's
+    flatten_to_mesh_edit() docstring for why its `dirty_verts` optimization
+    does not extend to this function.
+
     Returns:
         (layer_dict, mask_dict, active_layer_index)
         layer_dict: {v_idx: {bone_name: weight}}
@@ -241,7 +248,7 @@ def read_temp_vgs_from_bm(bm, obj) -> tuple:
 
 
 def write_layer_to_temp_vgs_bm(obj, mesh, layer_str: dict, id_to_bone: dict,
-                                mask_dict: dict = None) -> None:
+                                mask_dict: dict = None, dirty_verts: set = None) -> None:
     """Write a string-keyed layer dict back into __ssp_* VGs via BMesh.
 
     Call in EDIT mode after a weight op. Makes changes visible to
@@ -252,17 +259,34 @@ def write_layer_to_temp_vgs_bm(obj, mesh, layer_str: dict, id_to_bone: dict,
     Args:
         obj: mesh object (must be in EDIT mode)
         mesh: obj.data
-        layer_str: {v_idx: {bone_name: weight}} with string bone keys
+        layer_str: {v_idx: {bone_name: weight}} with string bone keys --
+            must stay the COMPLETE active layer even when dirty_verts is
+            given (only the BMesh *iteration* below is restricted, not this
+            lookup dict) -- trimming this to dirty_verts instead would make
+            every vertex outside it look "absent" to the sync loops below,
+            which treat absence as "clear this vertex's temp VG weight" and
+            would silently wipe every untouched vertex's weight-paint color.
         id_to_bone: {vg_index: bone_name} mapping
         mask_dict: optional {v_idx: float} mask updates
+        dirty_verts: when given, restricts the two BMesh sync loops below to
+            only these vertex indices instead of the whole mesh -- safe
+            because any vertex NOT in dirty_verts is guaranteed unchanged
+            since the last call (same reasoning already used for
+            flatten_to_mesh_edit()'s old_state loop). `None` (default)
+            preserves the original full-mesh scan exactly.
     """
     import bmesh as _bm
 
-    DebugLogService.log(
-        "temp_vg",
-        f"write_layer_to_temp_vgs_bm() ENTRY: layer_str verts={len(layer_str)} "
-        f"mask_dict={'None' if mask_dict is None else f'{len(mask_dict)} verts'}",
-    )
+    if DebugLogService.is_enabled("temp_vg"):
+        # Guarded: DebugLogService.log() only gates the print() internally --
+        # the f-string argument is still built eagerly by the caller before
+        # the call, so an unguarded call here pays this cost on every single
+        # gesture tick even when "temp_vg" logging is off (the common case).
+        DebugLogService.log(
+            "temp_vg",
+            f"write_layer_to_temp_vgs_bm() ENTRY: layer_str verts={len(layer_str)} "
+            f"mask_dict={'None' if mask_dict is None else f'{len(mask_dict)} verts'}",
+        )
 
     bone_to_vg_index = {name: idx for idx, name in id_to_bone.items()}
 
@@ -279,8 +303,19 @@ def write_layer_to_temp_vgs_bm(obj, mesh, layer_str: dict, id_to_bone: dict,
         if bone_name is not None:
             ssp_vg_idx_map[bone_name] = vg.index
 
+    # Restricted to dirty_verts when given: a bone can only gain weight for
+    # the first time (needing a fresh __ssp_N VG) on a vertex whose weight
+    # actually changed this tick, i.e. one already in dirty_verts. Any bone
+    # already carrying weight on a vertex outside dirty_verts must have had
+    # its __ssp_N VG created on an earlier tick, when that vertex was itself
+    # the one that was dirty -- so skipping non-dirty vertices here can't
+    # miss a bone that genuinely needs a new VG.
     all_bone_names: set = set()
-    for v_weights in layer_str.values():
+    bone_scan_source = (
+        (layer_str.get(v, {}) for v in dirty_verts) if dirty_verts is not None
+        else layer_str.values()
+    )
+    for v_weights in bone_scan_source:
         all_bone_names.update(v_weights.keys())
     for bone_name in all_bone_names:
         if bone_name not in ssp_vg_idx_map:
@@ -303,11 +338,14 @@ def write_layer_to_temp_vgs_bm(obj, mesh, layer_str: dict, id_to_bone: dict,
     # docs/bug-history/0020.
     all_ssp_indices: set = set(ssp_vg_idx_map.values())
 
-    DebugLogService.log(
-        "temp_vg",
-        f"mask_vg_idx={mask_vg_idx} all_ssp_indices={sorted(all_ssp_indices)} "
-        f"(mask_vg_idx must NOT appear in all_ssp_indices — see bug-history/0020)",
-    )
+    if DebugLogService.is_enabled("temp_vg"):
+        # Guarded: sorted(all_ssp_indices) was previously computed on every
+        # single call regardless of whether "temp_vg" logging was on.
+        DebugLogService.log(
+            "temp_vg",
+            f"mask_vg_idx={mask_vg_idx} all_ssp_indices={sorted(all_ssp_indices)} "
+            f"(mask_vg_idx must NOT appear in all_ssp_indices — see bug-history/0020)",
+        )
 
     bm = _bm.from_edit_mesh(mesh)
     bm.verts.ensure_lookup_table()
@@ -322,7 +360,7 @@ def write_layer_to_temp_vgs_bm(obj, mesh, layer_str: dict, id_to_bone: dict,
                 entry[gi] = float(w)
         new_weights[int(v_idx)] = entry
 
-    for bv in bm.verts:
+    for bv in ((bm.verts[i] for i in dirty_verts) if dirty_verts is not None else bm.verts):
         v_deform = bv[deform]
         new = new_weights.get(bv.index, {})
         for gi in list(v_deform.keys()):
@@ -332,7 +370,7 @@ def write_layer_to_temp_vgs_bm(obj, mesh, layer_str: dict, id_to_bone: dict,
             v_deform[gi] = w
 
     if mask_dict is not None and mask_vg_idx is not None:
-        for bv in bm.verts:
+        for bv in ((bm.verts[i] for i in dirty_verts) if dirty_verts is not None else bm.verts):
             v_deform = bv[deform]
             w = mask_dict.get(bv.index)
             if w and float(w) > 0.0:

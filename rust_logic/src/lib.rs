@@ -63,18 +63,73 @@ fn rust_compute_bone_depths(
 // ==============================================================================
 
 #[pyfunction]
+#[pyo3(signature = (meta_clean, layer_decoded_map, mask_decoded_map, num_verts, dirty_verts=None))]
 fn rust_composite_layers(
     meta_clean: Vec<HashMap<String, f32>>,
     // Compositor: keeps String keys for shader display (cold path)
     layer_decoded_map: HashMap<usize, HashMap<usize, HashMap<String, f32>>>,
     mask_decoded_map: HashMap<usize, HashMap<usize, f32>>,
     num_verts: usize,
+    // Optional vertex subset for hot paths (e.g. the weight-apply gesture
+    // modal) that know exactly which vertices could have changed since the
+    // last call. `None` preserves the original full-mesh behavior exactly --
+    // see layer_compositor.rs's composite_layers_engine() doc comment.
+    dirty_verts: Option<Vec<usize>>,
 ) -> PyResult<HashMap<usize, HashMap<String, f32>>> {
     let result = layer_compositor::composite_layers_engine(
         meta_clean,
         layer_decoded_map,
         mask_decoded_map,
         num_verts,
+        dirty_verts,
+    );
+    Ok(result)
+}
+
+/// Flat-array (COO) variant of `rust_composite_layers`, added as a NEW
+/// function name (never renaming/removing `rust_composite_layers` itself,
+/// per project convention) so the Python side can detect availability via
+/// `hasattr()` and fall back to the original HashMap-based call against an
+/// older `rust_logic.so` that hasn't been rebuilt with this function yet.
+///
+/// `coo_*_map` are four parallel per-layer maps (all keyed by the same
+/// layer index) instead of one `HashMap<usize, (Vec<...>, ...)>` of tuples,
+/// to keep each individual PyO3 conversion path simple and predictable:
+///   coo_vert_ids_map:   {layer_idx: [vertex_idx, ...]}
+///   coo_bone_ids_map:   {layer_idx: [local_bone_id, ...]}   (same length as vert_ids)
+///   coo_weights_map:    {layer_idx: [weight, ...]}          (same length as vert_ids)
+///   coo_id_to_bone_map: {layer_idx: {local_bone_id: bone_name}}
+/// `dict_layer_data_map` carries any layers NOT converted to COO (in
+/// practice, just the tiny active layer on the weight-apply gesture's hot
+/// path) in the original `HashMap<usize, HashMap<String,f32>>` per-vertex
+/// shape. See `core_subsystems/layer_compositor/codec.py` for how these are
+/// built, and `layer_compositor.rs::composite_layers_engine_mixed()` for how
+/// they're merged and handed to the existing, unmodified compositing math.
+#[pyfunction]
+#[pyo3(signature = (meta_clean, dict_layer_data_map, coo_vert_ids_map, coo_bone_ids_map,
+                    coo_weights_map, coo_id_to_bone_map, mask_decoded_map, num_verts,
+                    dirty_verts=None))]
+fn rust_composite_layers_mixed(
+    meta_clean: Vec<HashMap<String, f32>>,
+    dict_layer_data_map: HashMap<usize, HashMap<usize, HashMap<String, f32>>>,
+    coo_vert_ids_map: HashMap<usize, Vec<u32>>,
+    coo_bone_ids_map: HashMap<usize, Vec<i32>>,
+    coo_weights_map: HashMap<usize, Vec<f64>>,
+    coo_id_to_bone_map: HashMap<usize, HashMap<i32, String>>,
+    mask_decoded_map: HashMap<usize, HashMap<usize, f32>>,
+    num_verts: usize,
+    dirty_verts: Option<Vec<usize>>,
+) -> PyResult<HashMap<usize, HashMap<String, f32>>> {
+    let result = layer_compositor::composite_layers_engine_mixed(
+        meta_clean,
+        dict_layer_data_map,
+        coo_vert_ids_map,
+        coo_bone_ids_map,
+        coo_weights_map,
+        coo_id_to_bone_map,
+        mask_decoded_map,
+        num_verts,
+        dirty_verts,
     );
     Ok(result)
 }
@@ -324,6 +379,7 @@ fn rust_logic<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()> {
 
     // Weight Calculator — compositor + smooth
     m.add_function(wrap_pyfunction!(rust_composite_layers, m)?)?;
+    m.add_function(wrap_pyfunction!(rust_composite_layers_mixed, m)?)?;
     m.add_function(wrap_pyfunction!(rust_smooth_logic, m)?)?;
 
     // Weight Calculator — norm

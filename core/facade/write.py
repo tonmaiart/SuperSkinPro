@@ -22,6 +22,7 @@ internals, so it can never drift out of sync with orphan/mask handling
 changes made to either. See docs/core-interfaces/edit_mode_weight_write_pattern.md.
 """
 
+import time
 from contextlib import contextmanager
 
 from ...core_subsystems.rust_weight_engine import RustWeightEngine
@@ -153,7 +154,8 @@ class WriteFacadeMixin:
 
         self.storage.write_mask_dict(self.active_layer_index, mask_dict)
 
-    def finish(self, *, color_only: bool = False):
+    def finish(self, *, color_only: bool = False, dirty_verts: set = None,
+              active_layer_override: dict = None, mask_override: dict = None):
         """Reflatten layers to mesh vertex groups and request a viewport redraw.
 
         Routes through pipeline.flatten_to_mesh_edit() when in EDIT mode,
@@ -164,9 +166,19 @@ class WriteFacadeMixin:
         Args:
             color_only: When True, only the colour VBO is invalidated. Use for
                 weight-paint strokes where mesh topology is unchanged.
+            dirty_verts: forwarded to flatten_to_mesh_edit() (EDIT mode only)
+                to restrict its post-composite BMesh write loop to a known
+                vertex subset. `None` (default) preserves full-mesh behavior.
+                See flatten_to_mesh_edit()'s docstring for the correctness
+                assumption this relies on.
+            active_layer_override, mask_override: forwarded to
+                flatten_to_mesh_edit() to skip its BMesh read entirely. See
+                that function's docstring for the correctness contract.
         """
         if self._obj.mode == 'EDIT':
-            pipeline.flatten_to_mesh_edit(self)
+            pipeline.flatten_to_mesh_edit(self, dirty_verts=dirty_verts,
+                                          active_layer_override=active_layer_override,
+                                          mask_override=mask_override)
         else:
             self._storage.flatten_visible_layers_to_mesh(self._obj)
         self._mesh.update()
@@ -180,7 +192,8 @@ class WriteFacadeMixin:
     def finish_color_only(self):
         self.finish(color_only=True)
 
-    def write_active_layer(self, layer_str: dict, *, color_only: bool = True) -> None:
+    def write_active_layer(self, layer_str: dict, *, color_only: bool = True,
+                           dirty_verts: set = None) -> None:
         """Write a string-keyed layer dict to the correct target for the current
         mode, then call finish().
 
@@ -192,6 +205,9 @@ class WriteFacadeMixin:
             layer_str: {v_idx (int): {bone_name (str): weight (float)}}
             color_only: Passed to finish(). True when topology is unchanged
                 (typical for weight-paint brush strokes).
+            dirty_verts: passed to finish(). See flatten_to_mesh_edit()'s
+                docstring for what this restricts and the correctness
+                assumption it relies on.
 
         Call read_active_layer() first on this instance so the bone mapping
         cache is populated; otherwise the mapping is computed fresh.
@@ -202,12 +218,14 @@ class WriteFacadeMixin:
             v_idx: {self._bone_to_id[b]: w for b, w in weights.items() if b in self._bone_to_id}
             for v_idx, weights in layer_str.items()
         }
-        DebugLogService.log(
-            "core_pipeline",
-            f"write_active_layer(): {len(result_int)} verts, obj.mode={self.obj.mode}",
-        )
-        self._write_active_layer_string(result_int, self._id_to_bone, None, is_mask_mode=False)
-        self.finish(color_only=color_only)
+        if DebugLogService.is_enabled("core_pipeline"):
+            DebugLogService.log(
+                "core_pipeline",
+                f"write_active_layer(): {len(result_int)} verts, obj.mode={self.obj.mode}",
+            )
+        self._write_active_layer_string(result_int, self._id_to_bone, None, is_mask_mode=False,
+                                        dirty_verts=dirty_verts)
+        self.finish(color_only=color_only, dirty_verts=dirty_verts)
 
     @contextmanager
     def mutate_active_layer(self, *, color_only: bool = True):
@@ -240,21 +258,29 @@ class WriteFacadeMixin:
 
     def _write_active_layer_string(self, layer_int: dict, id_to_bone: dict,
                                     mask_dict: dict = None, *,
-                                    is_mask_mode: bool = False):
+                                    is_mask_mode: bool = False,
+                                    dirty_verts: set = None):
         """Convert int-keyed layer data, merge orphans, prune zeros, and persist.
 
         Routes to __ssp_* BMesh temp VGs in EDIT mode; otherwise writes to
         ss_layer_N via storage.save_active(). Orphan re-merge and budget
         normalization are applied before writing.
+
+        Args:
+            dirty_verts: passed to write_layer_to_temp_vgs_bm() to restrict
+                its BMesh sync loops to a known vertex subset. `None`
+                (default) preserves full-mesh behavior -- see that
+                function's docstring for the correctness assumption.
         """
         from ..layer_storage.temp_vg_bridge import has_temp_vgs, write_layer_to_temp_vgs_bm
 
-        DebugLogService.log(
-            "core_pipeline",
-            f"_write_active_layer_string(): layer_int verts={len(layer_int)} "
-            f"mask_dict={'None' if mask_dict is None else f'{len(mask_dict)} verts'} "
-            f"is_mask_mode={is_mask_mode}",
-        )
+        if DebugLogService.is_enabled("core_pipeline"):
+            DebugLogService.log(
+                "core_pipeline",
+                f"_write_active_layer_string(): layer_int verts={len(layer_int)} "
+                f"mask_dict={'None' if mask_dict is None else f'{len(mask_dict)} verts'} "
+                f"is_mask_mode={is_mask_mode}",
+            )
 
         layer_str = RustWeightEngine.map_layer_to_string(layer_int, id_to_bone)
         orphan_entries = getattr(self, "_orphan_entries", {})
@@ -269,7 +295,8 @@ class WriteFacadeMixin:
         if self.obj.mode == 'EDIT':
             if has_temp_vgs(self.obj):
                 write_layer_to_temp_vgs_bm(
-                    self.obj, self.mesh, layer_str, id_to_bone, mask_dict
+                    self.obj, self.mesh, layer_str, id_to_bone, mask_dict,
+                    dirty_verts=dirty_verts,
                 )
                 if not is_mask_mode and orphan_entries:
                     _purge_zeroed_orphans_from_all_layers(self.storage, orphan_entries, layer_str)
@@ -279,7 +306,9 @@ class WriteFacadeMixin:
         if not is_mask_mode and orphan_entries:
             _purge_zeroed_orphans_from_all_layers(self.storage, orphan_entries, layer_str)
 
-    def write_active_layer_from_calc(self, layer_int: dict, id_to_bone: dict) -> None:
+    def write_active_layer_from_calc(self, layer_int: dict, id_to_bone: dict, *,
+                                     dirty_verts: set = None,
+                                     mask_override: dict = None) -> None:
         """Write an integer-keyed layer dict (direct Rust output) to the correct
         target for the current mode.
 
@@ -304,34 +333,130 @@ class WriteFacadeMixin:
         re-merging.
 
         Args:
-            layer_int: {v_idx (int): {vg_index (int): weight (float)}}
+            layer_int: {v_idx (int): {vg_index (int): weight (float)}} --
+                the caller must always pass the COMPLETE, current
+                active-layer dict here (see weight_apply_feature.py::
+                apply_action()'s comment on why it must never be trimmed by
+                the caller). Internally, when `dirty_verts` is given, this
+                method converts only that vertex subset to a string-keyed
+                dict for write_layer_to_temp_vgs_bm() and
+                flatten_to_mesh_edit()'s `active_layer_override` -- both of
+                those only ever read entries within `dirty_verts` on this
+                path, so converting the whole layer for them would be pure
+                waste. The persistence fallthrough (ss_layer_N, when not in
+                EDIT mode with temp VGs) still converts the full `layer_int`,
+                since it needs complete data.
             id_to_bone: {vg_index (int): bone_name (str)}
+            dirty_verts: passed to flatten_to_mesh_edit() to restrict its
+                post-composite BMesh write loop to a known vertex subset.
+                `None` (default) preserves full-mesh behavior. See
+                flatten_to_mesh_edit()'s docstring for the correctness
+                assumption this relies on.
+            mask_override: passed to flatten_to_mesh_edit() as its
+                `mask_override` -- this method doesn't touch mask data
+                itself, so the caller must supply the active layer's
+                current mask (unchanged since this call doesn't write it)
+                for the compositor to use in place of a BMesh mask read.
+                `None` (default) means "no mask data for this layer", same
+                as a full read finding none.
         """
-        layer_str = RustWeightEngine.map_layer_to_string(layer_int, id_to_bone)
-        RustWeightEngine.prune_zero_bones(layer_str)
+        _profile = DebugLogService.is_enabled("core_pipeline")
+        _t_start = time.perf_counter() if _profile else None
 
         if self._obj.mode == 'EDIT':
             from ..layer_storage.temp_vg_bridge import has_temp_vgs, write_layer_to_temp_vgs_bm
             if has_temp_vgs(self._obj):
+                # Only convert/prune the dirty-vertex subset here, not the
+                # whole painted layer. write_layer_to_temp_vgs_bm()'s BMesh
+                # sync loops (Phase 5) and flatten_to_mesh_edit()'s
+                # compositor override both only ever read entries for
+                # vertices in `dirty_verts` when it's given -- every entry
+                # outside that set is provably never looked up by either
+                # consumer on this path, so running map_layer_to_string()/
+                # prune_zero_bones() over the full active layer (which can
+                # be the whole mesh) was pure waste on the gesture hot path.
+                #
+                # `layer_str` here is intentionally NOT the complete active
+                # layer when dirty_verts is given -- do not repurpose it for
+                # anything that needs full data (the ss_layer_N persistence
+                # fallthrough below builds its own full conversion instead).
+                if dirty_verts is not None:
+                    layer_int_for_convert = {
+                        v: layer_int[v] for v in dirty_verts if v in layer_int
+                    }
+                else:
+                    layer_int_for_convert = layer_int
+                layer_str = RustWeightEngine.map_layer_to_string(layer_int_for_convert, id_to_bone)
+                RustWeightEngine.prune_zero_bones(layer_str)
+
+                if _profile:
+                    _t_convert = time.perf_counter()
+
+                _t0 = time.perf_counter() if _profile else None
+
                 # 1. Update temp VGs so the native Weight Overlay sees the
                 #    active layer's weights in real-time.
-                write_layer_to_temp_vgs_bm(self._obj, self._mesh, layer_str, id_to_bone)
+                write_layer_to_temp_vgs_bm(self._obj, self._mesh, layer_str, id_to_bone,
+                                           dirty_verts=dirty_verts)
+
+                if _profile:
+                    _t_tempvg = time.perf_counter()
 
                 # 2. Composite all visible layers and write the final evaluated
                 #    result directly into the real deformation VGs on the edit-
                 #    bmesh. This triggers an immediate Armature modifier update
                 #    so the viewport deform reflects the weight change.
-                pipeline.flatten_to_mesh_edit(self)
+                #    active_layer_override=layer_str reuses the dict this
+                #    method already built above instead of having
+                #    flatten_to_mesh_edit() re-read the identical data back
+                #    out of the BMesh via a full per-vertex scan.
+                pipeline.flatten_to_mesh_edit(self, dirty_verts=dirty_verts,
+                                              active_layer_override=layer_str,
+                                              mask_override=mask_override)
+
+                if _profile:
+                    _t_flatten = time.perf_counter()
 
                 # 3. Force the evaluated mesh and all 3D viewports to refresh.
                 import bpy as _bpy
                 self._obj.update_from_editmode()
+
+                if _profile:
+                    _t_update_editmode = time.perf_counter()
+
                 self._shader_mgr.bump_deform_generation()
                 self._obj["__ssp_deform_gen"] = self._obj.get("__ssp_deform_gen", 0) + 1
                 for window in _bpy.context.window_manager.windows:
                     for area in window.screen.areas:
                         if area.type == 'VIEW_3D':
                             area.tag_redraw()
+
+                if _profile:
+                    _t_redraw = time.perf_counter()
+                    # Isolates update_from_editmode()'s cost specifically --
+                    # it runs right after flatten_to_mesh_edit()'s own
+                    # bmesh.update_edit_mesh(), and the two may be doing
+                    # overlapping BMesh->Mesh sync work. Compare
+                    # update_from_editmode's ms against the others to see
+                    # if it's worth investigating removal (carefully --
+                    # the GPU visualizer may depend on it for immediate
+                    # deformed-coordinate reads).
+                    DebugLogService.log(
+                        "core_pipeline",
+                        f"write_active_layer_from_calc() EDIT breakdown: "
+                        f"map_to_string+prune={1000 * (_t_convert - _t_start):.2f}ms "
+                        f"write_layer_to_temp_vgs_bm={1000 * (_t_tempvg - _t0):.2f}ms "
+                        f"flatten_to_mesh_edit={1000 * (_t_flatten - _t_tempvg):.2f}ms "
+                        f"update_from_editmode={1000 * (_t_update_editmode - _t_flatten):.2f}ms "
+                        f"redraw_tagging={1000 * (_t_redraw - _t_update_editmode):.2f}ms "
+                        f"total_incl_convert={1000 * (_t_redraw - _t_start):.2f}ms",
+                    )
                 return
 
+        # Fallthrough: Object Mode, or EDIT mode without temp VGs. Neither
+        # of the dirty_verts-trimmed conversions above ran on this path, so
+        # build the FULL conversion here -- this writes straight to
+        # ss_layer_N and needs the complete active layer.
+        layer_str = RustWeightEngine.map_layer_to_string(layer_int, id_to_bone)
+        RustWeightEngine.prune_zero_bones(layer_str)
         self._storage.save_active(layer_str, is_mask_mode=self.is_mask_context())
