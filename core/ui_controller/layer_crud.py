@@ -171,9 +171,11 @@ def _bake_and_reload_temp_vgs(ctrl, new_layer_index: int):
 
         if has_temp_vgs(obj):
             layer_dict, mask_dict, _ = read_temp_vgs_to_layer(obj)
+            old_layer_dict = ctrl.storage.read_layer_dict(ctrl.active_layer_index)
             ctrl.storage.write_layer_dict(ctrl.active_layer_index, layer_dict)
             if mask_dict:
                 ctrl.storage.write_mask_dict(ctrl.active_layer_index, mask_dict)
+            ctrl.purge_zeroed_orphans_after_bake(old_layer_dict, layer_dict)
 
         delete_temp_vgs(obj)
 

@@ -53,12 +53,13 @@ def _extra_keep_predicate_impl(context, data, item, original_idx):
 class _BoneListVisibilityHooks(SuperSkinListMixin):
     """Plain-Python twin of MESH_UL_influence_list_view's hooks, used only
     by BoneListAdapter.get_keys_in_visual_order() for off-draw-cycle
-    visibility computation. Orphan rows are excluded here (unlike the real
-    UIList's own predicate), since they must never enter a range-select
-    span between two real bone rows. The mask row IS included — it
-    participates in multi-select, range-select, and select-all like any
-    other row (see BoneListAdapter for how last_clicked_index/active_is_mask
-    stay in sync when the mask row is the selection anchor)."""
+    visibility computation. Orphan rows participate in multi-select,
+    range-select, and select-all exactly like real bone rows and the mask
+    row -- weight ops already target orphan bones via synthetic IDs
+    (get_unified_mapping(), see docs/bug-history/0017), so there's no
+    correctness reason left to wall them off from bulk selection; doing so
+    only meant Ctrl/Shift-click and Select All silently dropped orphan rows
+    from the selection pool."""
 
     def get_item_key(self, item):
         return item.name
@@ -68,8 +69,6 @@ class _BoneListVisibilityHooks(SuperSkinListMixin):
         return list(range(len(items)))
 
     def extra_keep_predicate(self, context, data, item, original_idx):
-        if getattr(item, 'is_orphan', False):
-            return False
         return _extra_keep_predicate_impl(context, data, item, original_idx)
 
 
@@ -113,6 +112,8 @@ class BoneListAdapter(ListSelectionAdapter):
         last_key = None
         if storage.active_is_mask:
             last_key = _mask_key(obj)
+        elif storage.active_orphan_name:
+            last_key = storage.active_orphan_name
         elif 0 <= storage.last_clicked_index < len(vg_list):
             last_key = vg_list[storage.last_clicked_index].name
 
@@ -144,15 +145,23 @@ class BoneListAdapter(ListSelectionAdapter):
             storage.selected_names = ","
 
         mask_key = _mask_key(obj)
+        orphan_names = {item.name for item in obj.superskin_bones_collection if item.is_orphan}
         if last_key is not None and last_key == mask_key:
             storage.last_clicked_index = -1
             storage.active_is_mask = True
-        elif last_key and last_key in name_to_idx:
+            storage.active_orphan_name = ""
+        elif last_key in name_to_idx:
             storage.last_clicked_index = name_to_idx[last_key]
             storage.active_is_mask = False
+            storage.active_orphan_name = ""
+        elif last_key in orphan_names:
+            storage.last_clicked_index = -1
+            storage.active_is_mask = False
+            storage.active_orphan_name = last_key
         else:
             storage.last_clicked_index = -1
             storage.active_is_mask = False
+            storage.active_orphan_name = ""
 
         hist_indices = []
         for k in history:
@@ -171,6 +180,12 @@ class BoneListAdapter(ListSelectionAdapter):
         storage = obj.superskin_storage
         storage.active_orphan_name = ""
         mask_key = _mask_key(obj)
+
+        try:
+            from ...core.facade import CoreFacade
+            CoreFacade(context).clear_orphan_weight_preview()
+        except Exception:
+            pass
 
         if key is not None and key == mask_key:
             try:

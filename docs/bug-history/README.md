@@ -72,3 +72,4 @@ one — don't derive it from a date or guess. Inside, cover:
 | [0023](0023-weight-transfer-mask-default-fallback.md) | Weight Transfer wrote zero vertices because a missing mask entry was treated as `0.0` instead of the layer's `mask_default` | `features/weight_transfer/ops.py`, `core/layer_storage/topology_heal.py` |
 | [0024](0024-mirror-mask-gap-fill-hardcoded-default.md) | Mirror mask gap-fill over-fills large regions to solid white on non-default-mask Layers | `features/mirror/logic.py` |
 | [0025](0025-mirror-center-seam-vertex-not-symmetrized.md) | Mirror weight channel never gave true 50/50 weight to vertices sitting exactly on the mirror seam | `features/mirror/logic.py` |
+| [0026](0026-orphan-synthetic-id-drifts-once-temp-vgs-exist.md) | Orphan bone's synthetic ID drifts once temp VGs exist, making its own `__ssp_N` VG invisible to writes | `core/layer_storage/geometry.py`, `core/facade/write.py` |

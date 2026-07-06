@@ -16,6 +16,13 @@ _write_active_layer_string() for orphan-merge / temp-VG routing logic.
 _normalize_orphan_budget() and _purge_zeroed_orphans_from_all_layers() are
 module-level helpers used exclusively by _write_active_layer_string().
 
+purge_zeroed_orphans_after_bake() is a separate module-level entry point (plus
+a WriteFacadeMixin method wrapper of the same name) for callers that bypass
+_write_active_layer_string() entirely and write straight to storage --
+namely the three temp-VG bake-back sites (Exit Edit Mode, layer switch,
+file-load recovery), which persist to ss_layer_N without ever populating the
+facade's _orphan_entries read-cache.
+
 mutate_active_layer() is a thin contextmanager composition of
 read_active_layer() + write_active_layer() — it does not duplicate their
 internals, so it can never drift out of sync with orphan/mask handling
@@ -107,8 +114,42 @@ def _purge_zeroed_orphans_from_all_layers(storage, orphan_entries: dict,
         storage.write_meta_list(meta_list)
 
 
+def purge_zeroed_orphans_after_bake(storage, obj, old_layer_dict: dict,
+                                     new_layer_dict: dict) -> None:
+    """Call immediately after a temp-VG bake-back writes new_layer_dict to
+    ss_layer_N for the active layer, passing the layer's PRE-bake dict as
+    old_layer_dict (read via storage.read_layer_dict(active_idx) before the
+    write). Detects orphan bone names in old_layer_dict (any bone name not
+    backed by a real, non-__ssp_* vertex group -- same rule as
+    facade/read.py's _read_active_layer_int()) that are absent from
+    new_layer_dict, and purges those from ss_layers_meta and every other
+    layer's stored weight dict, mirroring what _write_active_layer_string()
+    already does for its own write path.
+
+    Bake-back sites (layer switch, Exit Edit Mode, file-load recovery) write
+    straight to storage and never go through _write_active_layer_string(), so
+    they need this explicit call to get equivalent orphan cleanup.
+
+    new_layer_dict is expected to already be zero-pruned by the caller
+    (read_temp_vgs_from_bm() / read_temp_vgs_to_layer() both prune before
+    returning) -- this only diffs bone-name presence, it does not re-prune.
+    """
+    real_vg_names = {vg.name for vg in obj.vertex_groups if not vg.name.startswith("__ssp_")}
+    orphan_entries = {
+        v_idx: {b: w for b, w in weights.items() if b not in real_vg_names}
+        for v_idx, weights in old_layer_dict.items()
+        if any(b not in real_vg_names for b in weights)
+    }
+    if orphan_entries:
+        _purge_zeroed_orphans_from_all_layers(storage, orphan_entries, new_layer_dict)
+
+
 class WriteFacadeMixin:
     """Mixin providing write access to layer storage and flatten pipeline."""
+
+    def purge_zeroed_orphans_after_bake(self, old_layer_dict: dict, new_layer_dict: dict) -> None:
+        """See module-level purge_zeroed_orphans_after_bake() in this file."""
+        purge_zeroed_orphans_after_bake(self.storage, self.obj, old_layer_dict, new_layer_dict)
 
     def write_layer_dict(self, layer_dict: dict):
         """Commit a nested weight dict straight to ss_layer_N.
@@ -284,13 +325,67 @@ class WriteFacadeMixin:
 
         layer_str = RustWeightEngine.map_layer_to_string(layer_int, id_to_bone)
         orphan_entries = getattr(self, "_orphan_entries", {})
+
+        # NOTE: must count only REAL vertex groups here, not
+        # len(self.obj.vertex_groups) -- in EDIT mode with temp VGs loaded,
+        # that count is inflated by one __ssp_N per id_to_bone entry (real
+        # AND orphan) plus __ssp_m/__ssp_meta, so idx < that inflated count
+        # is true for every orphan synthetic ID too, silently misclassifying
+        # every orphan as "known" and turning budget normalization into a
+        # no-op for the entire Edit Mode session.
+        real_vg_count = sum(1 for vg in self.obj.vertex_groups
+                            if not vg.name.startswith("__ssp_"))
+        known_bone_names = {name for idx, name in id_to_bone.items()
+                            if idx < real_vg_count}
+        orphan_names_in_mapping = {name for idx, name in id_to_bone.items()
+                                   if idx >= real_vg_count}
+
+        if DebugLogService.is_enabled("core_pipeline") and orphan_names_in_mapping:
+            def _totals(d):
+                out = {}
+                for name in orphan_names_in_mapping:
+                    total = sum(v.get(name, 0.0) for v in d.values())
+                    if total > 0:
+                        out[name] = round(total, 4)
+                return out
+            DebugLogService.log(
+                "core_pipeline",
+                f"_write_active_layer_string(): orphan_names_in_mapping={sorted(orphan_names_in_mapping)!r} "
+                f"orphan_entries(from _read_active_layer_int)={ {k: sorted(v.keys()) for k, v in orphan_entries.items()} !r} "
+                f"pre-normalize orphan totals in layer_str={_totals(layer_str)!r}",
+            )
+
+        # Re-merge is a safety net for callers whose layer_int doesn't cover
+        # every vertex (so a vertex missing from it doesn't silently lose
+        # its orphan weight here) -- it must NOT restore orphan data for a
+        # vertex this write actually touched, or a freshly computed zero
+        # (a real bone painted up over the orphan, or the orphan itself
+        # being scaled/added to directly as the active bone) gets stomped
+        # back to its old value every single write, making the orphan
+        # channel unkillable regardless of what the weight tool computed.
         for v_idx, orphan_weights in orphan_entries.items():
+            if dirty_verts is not None:
+                if v_idx in dirty_verts:
+                    continue
+            elif v_idx in layer_int:
+                continue
             layer_str.setdefault(v_idx, {}).update(orphan_weights)
         if not is_mask_mode:
-            known_bone_names = {name for idx, name in id_to_bone.items()
-                                if idx < len(self.obj.vertex_groups)}
             _normalize_orphan_budget(layer_str, known_bone_names)
         RustWeightEngine.prune_zero_bones(layer_str)
+
+        if DebugLogService.is_enabled("core_pipeline") and orphan_names_in_mapping:
+            still_present = set()
+            for v in layer_str.values():
+                still_present.update(v.keys())
+            DebugLogService.log(
+                "core_pipeline",
+                f"_write_active_layer_string(): post-normalize/prune orphan totals in "
+                f"layer_str={_totals(layer_str)!r} still_present_names={sorted(orphan_names_in_mapping & still_present)!r} "
+                f"(empty means fully zeroed and pruned from THIS layer's write) "
+                f"orphan_entries_truthy={bool(orphan_entries)} (controls whether "
+                f"_purge_zeroed_orphans_from_all_layers runs below)",
+            )
 
         if self.obj.mode == 'EDIT':
             if has_temp_vgs(self.obj):
@@ -387,7 +482,57 @@ class WriteFacadeMixin:
                 else:
                     layer_int_for_convert = layer_int
                 layer_str = RustWeightEngine.map_layer_to_string(layer_int_for_convert, id_to_bone)
+
+                # Rust's add/scale/smooth/sharpen only ever touch the known
+                # (real-vertex-group) bone channels -- an orphan bone's
+                # weight is carried through completely unchanged unless
+                # something squeezes it down here, same as
+                # _write_active_layer_string() already does for its own
+                # write path via _normalize_orphan_budget(). Without this,
+                # painting a real bone up to full weight on top of an
+                # orphan never reduces the orphan's stored value at all,
+                # so it can never reach zero and be purged.
+                #
+                # NOTE: must count only REAL vertex groups -- in EDIT mode
+                # with temp VGs loaded, self._obj.vertex_groups also holds
+                # one __ssp_N per id_to_bone entry (real AND orphan) plus
+                # __ssp_m/__ssp_meta, so len(self._obj.vertex_groups) is
+                # roughly double-plus the real count. Using that inflated
+                # count here made `idx < len(...)` true for every orphan
+                # synthetic ID too, silently classifying every orphan as
+                # "known" and turning the squeeze below into a permanent
+                # no-op for the entire Edit Mode session -- the actual
+                # reason painting a real bone over an orphan never reduced
+                # it to zero even after _normalize_orphan_budget() was
+                # added to this branch.
+                real_vg_count = sum(1 for vg in self._obj.vertex_groups
+                                    if not vg.name.startswith("__ssp_"))
+                known_bone_names = {name for idx, name in id_to_bone.items()
+                                    if idx < real_vg_count}
+                _normalize_orphan_budget(layer_str, known_bone_names)
                 RustWeightEngine.prune_zero_bones(layer_str)
+
+                if DebugLogService.is_enabled("core_pipeline"):
+                    orphan_names = {name for idx, name in id_to_bone.items()
+                                   if idx >= real_vg_count}
+                    if orphan_names:
+                        totals = {}
+                        for name in orphan_names:
+                            t = sum(v.get(name, 0.0) for v in layer_str.values())
+                            if t > 0:
+                                totals[name] = round(t, 4)
+                        DebugLogService.log(
+                            "core_pipeline",
+                            f"write_active_layer_from_calc() EDIT branch: "
+                            f"dirty_verts={len(dirty_verts) if dirty_verts is not None else 'ALL'} "
+                            f"total_mesh_vertices={len(self._obj.data.vertices)} "
+                            f"orphan_names_in_mapping={sorted(orphan_names)!r} "
+                            f"post-prune orphan totals WITHIN dirty_verts scope={totals!r} "
+                            f"(empty means fully cleared within this tick's touched vertices; "
+                            f"NOTE this is trimmed to dirty_verts, not the whole mesh -- an "
+                            f"orphan with weight OUTSIDE dirty_verts won't show here even "
+                            f"though it's untouched, not zeroed)",
+                        )
 
                 if _profile:
                     _t_convert = time.perf_counter()
@@ -398,6 +543,40 @@ class WriteFacadeMixin:
                 #    active layer's weights in real-time.
                 write_layer_to_temp_vgs_bm(self._obj, self._mesh, layer_str, id_to_bone,
                                            dirty_verts=dirty_verts)
+
+                if DebugLogService.is_enabled("core_pipeline") and orphan_names:
+                    import bmesh as _bm_check
+                    bm_check = _bm_check.from_edit_mesh(self._mesh)
+                    bm_check.verts.ensure_lookup_table()
+                    deform_check = bm_check.verts.layers.deform.active
+                    ssp_vg_idx_map_check = {
+                        vg.name[len("__ssp_"):]: vg.index
+                        for vg in self._obj.vertex_groups
+                        if vg.name.startswith("__ssp_") and vg.name not in ("__ssp_m", "__ssp_meta")
+                    }
+                    for name in orphan_names:
+                        vg_idx_for_name = next(
+                            (idx for idx, n in id_to_bone.items() if n == name), None
+                        )
+                        gi = ssp_vg_idx_map_check.get(str(vg_idx_for_name))
+                        if gi is None:
+                            continue
+                        still_weighted = [
+                            bv.index for bv in bm_check.verts
+                            if gi in bv[deform_check] and bv[deform_check][gi] > 0.0
+                        ]
+                        DebugLogService.log(
+                            "core_pipeline",
+                            f"write_active_layer_from_calc(): IMMEDIATE post-write BMesh "
+                            f"check for orphan={name!r} gi={gi} -- "
+                            f"{len(still_weighted)} verts STILL have nonzero weight in the "
+                            f"live BMesh right after write_layer_to_temp_vgs_bm() returned "
+                            f"(first 10: {still_weighted[:10]!r}). Compare against the "
+                            f"'post-prune orphan totals' log just above -- if that log said "
+                            f"{{}} (fully cleared in layer_str) but this list is non-empty, "
+                            f"the bug is in write_layer_to_temp_vgs_bm()'s BMesh deletion "
+                            f"loop itself, not in the data fed into it.",
+                        )
 
                 if _profile:
                     _t_tempvg = time.perf_counter()

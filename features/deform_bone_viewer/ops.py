@@ -35,8 +35,16 @@ class SUPERSKIN_OT_toggle_vg_lock(bpy.types.Operator):
         if not obj:
             return {'CANCELLED'}
 
-        vg_list = obj.vertex_groups
-        if self.index < 0 or self.index >= len(vg_list):
+        # index is only meaningful for real bone rows -- orphan rows are
+        # drawn with item.vg_index == -1 (see sync_bones_to_ui_collection()),
+        # since they have no real VertexGroup to index into. The rest of
+        # this function only ever keys off vg_name (bone locks are stored
+        # {bone_name: bool} in layer metadata, not by index), so validating
+        # against vg_list here rejected every orphan-row lock click before
+        # it could do anything -- clicked_name being empty is the only
+        # actually-invalid case.
+        clicked_name = self.vg_name
+        if not clicked_name:
             return {'CANCELLED'}
 
         ctrl = CoreFacade(context)
@@ -44,7 +52,6 @@ class SUPERSKIN_OT_toggle_vg_lock(bpy.types.Operator):
         # Read current state from metadata — metadata is the single source of
         # truth for bone locks, not the native VertexGroup.lock_weight field.
         current_locks = ctrl.get_bone_locks()
-        clicked_name = self.vg_name
         new_lock_state = not current_locks.get(clicked_name, False)
 
         new_locks = dict(current_locks)
@@ -73,12 +80,20 @@ class SUPERSKIN_OT_select_all_vgs(bpy.types.Operator):
 
     def execute(self, context):
         obj = context.active_object
-        if not obj or not obj.vertex_groups:
+        if not obj or not (obj.vertex_groups or obj.superskin_bones_collection):
             return {'CANCELLED'}
 
         storage = obj.superskin_storage
+        # Real bones + orphan bones (weight ops already target orphans fine
+        # via synthetic IDs -- get_unified_mapping(), docs/bug-history/0017 --
+        # so Select All shouldn't silently drop them from the pool) + Mask.
         names = [vg.name for vg in obj.vertex_groups]
-        mask_name = next((i.name for i in obj.superskin_bones_collection if i.is_mask), None)
+        mask_name = None
+        for item in obj.superskin_bones_collection:
+            if item.is_mask:
+                mask_name = item.name
+            elif item.is_orphan:
+                names.append(item.name)
         if mask_name:
             names.append(mask_name)
         storage.selected_names = f",{','.join(names)},"

@@ -24,10 +24,24 @@ except Exception:
 
 
 def register():
-    """Called by interface.register(). Leaf modules are already loaded."""
-    pass
+    """Called by interface.register(). Leaf modules are already loaded.
+
+    Must delegate to utils.py's own register() -- this subpackage-level
+    function used to be a no-op `pass`, so utils.py's depsgraph_update_post
+    / load_post handlers (sync_layers_to_ui_collection,
+    sync_bones_to_ui_collection, _reflatten_if_vg_names_changed) defined a
+    register() that looked correct but was never actually invoked from
+    anywhere, so those handlers were never appended to bpy.app.handlers at
+    all. Traced via the orphan-bone-rename investigation: the Deform Bones
+    mirror collection only ever got populated by
+    deform_bone_viewer/ui.py's narrow self-heal timer fallback, never by
+    this (supposedly primary) sync path.
+    """
+    from . import utils as _leaf
+    _leaf.register()
 
 
 def unregister():
     """Called by interface.unregister(). Leaf modules are already loaded."""
-    pass
+    from . import utils as _leaf
+    _leaf.unregister()

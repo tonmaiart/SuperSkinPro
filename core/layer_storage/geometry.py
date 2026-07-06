@@ -26,12 +26,30 @@ def get_local_mapping(obj) -> tuple[dict[str, int], dict[int, str]]:
 def get_unified_mapping(obj) -> tuple[dict[str, int], dict[int, str]]:
     """Like get_local_mapping but also assigns synthetic int IDs to orphaned
     bones (in superskin_bones_collection but not in vertex_groups), so
-    downstream code treats real and orphaned bones identically."""
+    downstream code treats real and orphaned bones identically.
+
+    The synthetic ID sequence MUST start right after the real (non-__ssp_*)
+    vertex-group count, not len(obj.vertex_groups) -- while Edit Mode temp
+    VGs are loaded, obj.vertex_groups also holds one __ssp_N per bone (real
+    and orphan) plus __ssp_m/__ssp_meta, so len(obj.vertex_groups) is
+    roughly double the real count. Using that inflated count here reassigns
+    an orphan a DIFFERENT synthetic ID on every fresh call made while temp
+    VGs exist than the ID baked into its __ssp_N VG's name back when
+    load_layer_to_temp_vgs() created it (before this session's temp VGs
+    existed, when len(vertex_groups) was still just the real count). Once
+    that mismatch happens, write_layer_to_temp_vgs_bm()'s VG-name lookup
+    (id_to_bone.get(int(suffix))) silently fails to resolve the orphan's
+    real __ssp_N VG at all, so it's invisible to that write path's
+    clear-if-absent loop and its weight can never be reduced or cleared no
+    matter what gets computed -- using len(bone_to_id) here instead keeps
+    the sequence anchored to the real count alone, identical whether or
+    not temp VGs currently exist.
+    """
     bone_to_id = {vg.name: vg.index for vg in obj.vertex_groups
                   if not vg.name.startswith("__ssp_")}
     id_to_bone = {vg.index: vg.name for vg in obj.vertex_groups
                   if not vg.name.startswith("__ssp_")}
-    synthetic_id = len(obj.vertex_groups)
+    synthetic_id = len(bone_to_id)
     for item in getattr(obj, 'superskin_bones_collection', ()):
         if item.is_orphan and item.name not in bone_to_id:
             bone_to_id[item.name] = synthetic_id

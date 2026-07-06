@@ -24,13 +24,20 @@ bone-UUID-map write raises ``AttributeError: Writing to ID classes in
 this context is not allowed`` if called from there.
 """
 
+import json
+
 from ..layer_storage.storage_service import LayerStorageService
+from ...core_subsystems.debug_logging import DebugLogService
 from . import orphan_resolver
 
 # {mesh_name: [orphan_dict, ...]}
 _scan_cache: dict = {}
 # {mesh_name: signature} — see _compute_signature
 _scan_cache_key: dict = {}
+
+# Temp VG name for previewing an orphan bone's composited weight via
+# Blender's native Weight Overlay -- see preview_orphan_weight().
+_ORPHAN_PREVIEW_VG = "__ssp_orphan_preview"
 
 
 def _find_armature(obj):
@@ -40,20 +47,103 @@ def _find_armature(obj):
     )
 
 
+def _mapping_has_orphan_ids(obj) -> bool:
+    """Cheap check: does this Edit Mode session's bone mapping
+    (``__ssp_meta_map``) contain any synthetic (orphan) ID at all?
+
+    Just a small-JSON parse plus a vertex-group-name pass -- no mesh scan.
+    Lets ``_read_live_active_layer`` skip its expensive per-vertex read
+    entirely for the overwhelmingly common case (no orphans in this
+    session), which matters because that read used to run on every
+    depsgraph tick, including the several tick fired back-to-back while
+    Entering/Exiting Edit Mode creates or removes one ``__ssp_N`` VG per
+    bone -- that multiplication was the actual cause of the Enter/Exit lag,
+    not the read itself being slow for a normal (no-orphan) mesh.
+    """
+    real_vg_count = sum(1 for vg in obj.vertex_groups if not vg.name.startswith("__ssp_"))
+    try:
+        id_to_bone = json.loads(obj.get("__ssp_meta_map", "{}"))
+    except Exception:
+        return False
+    return any(int(k) >= real_vg_count for k in id_to_bone)
+
+
+def _read_live_active_layer(obj):
+    """Return (active_layer_index, layer_dict) from the live temp VGs while
+    an Edit Mode session is loaded AND at least one orphan bone is part of
+    this session's mapping, or (None, None) otherwise.
+
+    During Edit Mode, the active layer's true current weights live in
+    ``__ssp_*`` temp VGs, not ``ss_layer_N`` -- persistence is deferred to
+    Save Weights. Reading this lets orphan detection reflect painting
+    changes as they happen instead of only after baking back to storage.
+
+    Gated by ``_mapping_has_orphan_ids()`` first -- see that function's
+    docstring for why skipping the expensive scan when there's nothing to
+    find is not just an optimization but the fix for a real Enter/Exit
+    Edit Mode lag regression.
+
+    Uses read_temp_vgs_from_bm() (one pass over bm.verts, reading each
+    vertex's own deform layer entries) instead of read_temp_vgs_to_layer()
+    (one full mesh.vertices pass PER __ssp_* VG) whenever obj is actually in
+    EDIT mode -- this can still run on every depsgraph tick while painting
+    a mesh that does have an orphan, so the per-bone-vs-per-vertex cost
+    difference matters here. Falls back to the mesh.vertices-based reader
+    for the brief OBJECT-mode window mid-bake where temp VGs still exist
+    but there's no edit BMesh to read from.
+    """
+    from ..layer_storage.temp_vg_bridge import (
+        has_temp_vgs, read_temp_vgs_from_bm, read_temp_vgs_to_layer,
+        get_active_layer_from_meta,
+    )
+    if not has_temp_vgs(obj) or not _mapping_has_orphan_ids(obj):
+        return None, None
+    active_idx = get_active_layer_from_meta(obj)
+    if obj.mode == 'EDIT':
+        import bmesh
+        bm = bmesh.from_edit_mesh(obj.data)
+        layer_dict, _, _ = read_temp_vgs_from_bm(bm, obj)
+    else:
+        layer_dict, _, _ = read_temp_vgs_to_layer(obj)
+    return active_idx, layer_dict
+
+
 def _compute_signature(storage, obj, arm_obj) -> tuple:
-    """Cheap signature of everything orphan detection depends on: live
-    vertex-group names, every layer's raw weight blob, and the live
-    armature's bone names. A mismatch against the last scan's signature
-    means something that could change orphan status actually changed, so
-    it's safe to skip the real (more expensive, decode-every-layer) scan
-    whenever this matches — same trade-off as
+    """Cheap signature of everything orphan detection depends on: real
+    (non-``__ssp_*``) vertex-group names, every layer's raw weight blob,
+    the live armature's bone names, and (only while this Edit Mode
+    session's mapping actually includes an orphan) the ``__ssp_deform_gen``
+    write counter. A mismatch against the last scan's signature means
+    something that could change orphan status actually changed, so it's
+    safe to skip the real (more expensive, decode-every-layer, and
+    possibly live-BMesh) scan whenever this matches — same trade-off as
     ``_get_visible_influence_bones``'s ``hash(raw_blob)`` key, just
     extended across every layer instead of only the active one, since an
-    orphan can hide in any layer."""
-    vg_names = tuple(sorted(vg.name for vg in obj.vertex_groups))
+    orphan can hide in any layer.
+
+    Deliberately cheap enough to call on every redraw / depsgraph tick with
+    NO mesh scan of any kind:
+      - ``__ssp_*`` temp VG names are excluded from ``vg_names`` so
+        Entering/Exiting Edit Mode (which creates/removes one ``__ssp_N``
+        VG per bone) doesn't spuriously invalidate this every tick of that
+        sequence -- that over-invalidation, combined with the live-BMesh
+        read `_read_live_active_layer()` used to always perform to build
+        this signature, was the actual cause of a real Enter/Exit lag
+        regression.
+      - ``__ssp_deform_gen`` (bumped once per real weight write by
+        write_active_layer_from_calc(), and only then) stands in for the
+        live active-layer content instead of hashing it directly, so
+        callers only need to actually read the live temp-VG data
+        (`_read_live_active_layer()`) on a genuine signature mismatch, not
+        on every call just to compute this signature.
+    """
+    vg_names = tuple(sorted(
+        vg.name for vg in obj.vertex_groups if not vg.name.startswith("__ssp_")
+    ))
     layer_blobs = tuple(sorted(storage.harvest_layer_data_map().items()))
     arm_names = tuple(sorted(b.name for b in arm_obj.data.bones)) if arm_obj else ()
-    return (vg_names, hash(layer_blobs), arm_names)
+    deform_gen = obj.get("__ssp_deform_gen", 0) if _mapping_has_orphan_ids(obj) else None
+    return (vg_names, hash(layer_blobs), arm_names, deform_gen)
 
 
 class BoneIdentityService:
@@ -88,7 +178,10 @@ class BoneIdentityService:
         if _scan_cache_key.get(key) == sig and key in _scan_cache:
             return _scan_cache[key]
 
-        result = orphan_resolver.scan_orphans(self.storage, self.obj, self.arm_obj)
+        live_override = _read_live_active_layer(self.obj)
+        result = orphan_resolver.scan_orphans(
+            self.storage, self.obj, self.arm_obj, live_override=live_override,
+        )
         _scan_cache[key] = result
         _scan_cache_key[key] = sig
         return result
@@ -113,7 +206,10 @@ class BoneIdentityService:
         look identical to a deletion — the same baseline-computed-after-
         the-mutation mistake documented in docs/bug-history/0011.
         """
-        result = orphan_resolver.scan_orphans(self.storage, self.obj, self.arm_obj)
+        live_override = _read_live_active_layer(self.obj)
+        result = orphan_resolver.scan_orphans(
+            self.storage, self.obj, self.arm_obj, live_override=live_override,
+        )
         orphan_resolver.backfill_uuid_map(self.storage, self.obj, self.arm_obj)
         key = self.obj.data.name
         _scan_cache[key] = result
@@ -130,6 +226,79 @@ class BoneIdentityService:
             self.storage, meta_list, source_name, layer_index=layer_index
         )
         facade.finish()
+
+    def preview_orphan_weight(self, orphan_name: str):
+        """Point the native Weight Overlay at *orphan_name*'s weight, even
+        though an orphan has no real VertexGroup of its own. Called from
+        ``SUPERSKIN_OT_select_orphan_bone_row`` on row selection.
+
+        Two branches, since the active layer lives in a different place
+        depending on mode:
+
+        Object Mode: composites *orphan_name*'s weight across all visible
+        layers (exactly like flatten_visible_layers_to_mesh() does for a
+        real bone) into a dedicated ``__ssp_orphan_preview`` temp VG, then
+        sets that as the native active VG.
+
+        Edit Mode: the orphan already has its own ``__ssp_N`` temp VG (via
+        get_unified_mapping()'s synthetic ID, wired into
+        _load_active_layer_to_temp_vgs() in ops_scene_modes.py) holding the
+        *active layer's* weight for it -- no new VG or weight write needed,
+        just look its index up from ``__ssp_meta_map`` and point
+        vertex_groups.active_index there.
+        """
+        if self.obj.mode == 'EDIT':
+            self._preview_orphan_weight_edit_mode(orphan_name)
+            return
+
+        weights = orphan_resolver.composite_orphan_weight(self.storage, self.obj, orphan_name)
+
+        vg = self.obj.vertex_groups.get(_ORPHAN_PREVIEW_VG)
+        num_verts = len(self.obj.data.vertices)
+        if vg is not None:
+            vg.remove(range(num_verts))
+        else:
+            vg = self.obj.vertex_groups.new(name=_ORPHAN_PREVIEW_VG)
+
+        for v_idx, w in weights.items():
+            vg.add([v_idx], w, 'REPLACE')
+
+        self.obj.vertex_groups.active_index = vg.index
+
+        DebugLogService.log(
+            "bone_id",
+            f"preview_orphan_weight(): obj={self.obj.name!r} orphan_name={orphan_name!r} "
+            f"OBJECT mode -- preview_vg_index={vg.index} weighted_verts={len(weights)}",
+        )
+
+    def _preview_orphan_weight_edit_mode(self, orphan_name: str):
+        weights_map_raw = self.obj.get("__ssp_meta_map", "{}")
+        try:
+            id_to_bone = {int(k): v for k, v in json.loads(weights_map_raw).items()}
+        except Exception:
+            id_to_bone = {}
+
+        vg_idx = next((k for k, v in id_to_bone.items() if v == orphan_name), None)
+        temp_vg = self.obj.vertex_groups.get(f"__ssp_{vg_idx}") if vg_idx is not None else None
+
+        DebugLogService.log(
+            "bone_id",
+            f"preview_orphan_weight(): obj={self.obj.name!r} orphan_name={orphan_name!r} "
+            f"EDIT mode -- ssp_meta_map has {len(id_to_bone)} entries, resolved "
+            f"vg_idx={vg_idx!r} temp_vg_found={temp_vg is not None}",
+        )
+
+        if temp_vg is not None:
+            self.obj.vertex_groups.active_index = temp_vg.index
+
+    def clear_orphan_weight_preview(self):
+        """Remove the ``__ssp_orphan_preview`` temp VG, if present. Call when
+        the Deform Bones list selection moves away from an orphan row (a
+        real bone or the Mask row gets selected instead) so the preview
+        doesn't linger as a stale, invisible VG on the mesh."""
+        vg = self.obj.vertex_groups.get(_ORPHAN_PREVIEW_VG)
+        if vg is not None:
+            self.obj.vertex_groups.remove(vg)
 
     @staticmethod
     def get_scan_for_object(obj) -> list:

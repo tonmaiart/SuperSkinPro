@@ -223,6 +223,14 @@ class CoreFacade(ReadFacadeMixin, WriteFacadeMixin, VisualizerFacadeMixin):
         from ..ui_controller import layer_crud
         return layer_crud.apply_active_bone(self)
 
+    def clear_orphan_weight_preview(self):
+        """Remove the temp VG that previews an orphan bone's composited
+        weight via the native Weight Overlay, if one is present. Call when
+        the Deform Bones list selection moves off an orphan row onto a real
+        bone or the Mask row. See BoneIdentityService.preview_orphan_weight()."""
+        from ..bone_identity import BoneIdentityService
+        BoneIdentityService(self.ctx, obj=self.obj).clear_orphan_weight_preview()
+
     def enter_mask_editing_context(self, active_vg_idx: int = -1):
         from ..ui_controller import layer_crud
         return layer_crud.enter_mask_editing_context(self, active_vg_idx)

@@ -369,6 +369,41 @@ def write_layer_to_temp_vgs_bm(obj, mesh, layer_str: dict, id_to_bone: dict,
         for gi, w in new.items():
             v_deform[gi] = w
 
+    if DebugLogService.is_enabled("temp_vg"):
+        # Direct verification of the clear-if-absent loop just above: scan
+        # the BMesh AGAIN right after it ran and count, per __ssp_ bone gi,
+        # how many vertices (within this call's dirty_verts scope) still
+        # carry nonzero weight for it. Any gi that new_weights never asked
+        # for (i.e. every vertex's entry for that bone-name was empty in
+        # layer_str) but still shows a nonzero count here means the delete
+        # above did not actually take effect for that gi -- as opposed to
+        # the bone genuinely still having weight because layer_str said so.
+        gi_to_bone = {idx: name for name, idx in ssp_vg_idx_map.items()}
+        expected_counts = {}
+        for v_idx, entry in new_weights.items():
+            for gi in entry:
+                expected_counts[gi] = expected_counts.get(gi, 0) + 1
+        residual_counts = {}
+        for bv2 in ((bm.verts[i] for i in dirty_verts) if dirty_verts is not None else bm.verts):
+            v_deform2 = bv2[deform]
+            for gi2 in v_deform2.keys():
+                if gi2 in all_ssp_indices and v_deform2[gi2] > 0.0:
+                    residual_counts[gi2] = residual_counts.get(gi2, 0) + 1
+        mismatches = {
+            gi_to_bone.get(gi, gi): (residual_counts.get(gi, 0), expected_counts.get(gi, 0))
+            for gi in all_ssp_indices
+            if residual_counts.get(gi, 0) != expected_counts.get(gi, 0)
+        }
+        DebugLogService.log(
+            "temp_vg",
+            f"write_layer_to_temp_vgs_bm() POST-DELETE VERIFICATION: "
+            f"per-bone (actual_verts_still_weighted, expected_from_new_weights) "
+            f"mismatches={mismatches!r} (empty means every __ssp_ bone's live "
+            f"BMesh vertex count exactly matches what new_weights asked for -- "
+            f"a non-empty entry means the delete loop above failed to clear "
+            f"that bone for some vertices within this call's dirty_verts scope)",
+        )
+
     if mask_dict is not None and mask_vg_idx is not None:
         for bv in ((bm.verts[i] for i in dirty_verts) if dirty_verts is not None else bm.verts):
             v_deform = bv[deform]

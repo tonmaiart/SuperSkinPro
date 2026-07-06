@@ -26,7 +26,7 @@ def backfill_uuid_map(storage, obj, arm_obj) -> dict:
     return uuid_map
 
 
-def scan_orphans(storage, obj, arm_obj) -> list:
+def scan_orphans(storage, obj, arm_obj, *, live_override: tuple = None) -> list:
     """Return one entry per orphaned bone NAME (not per layer):
     ``{"name", "classification", "suggested_target", "layer_indices"}``.
 
@@ -41,13 +41,25 @@ def scan_orphans(storage, obj, arm_obj) -> list:
     auto-applied), otherwise ``"ORPHANED"``. ``layer_indices`` lists every
     layer slot index whose weight data references this name, so resolve
     actions can act across all of them at once.
+
+    live_override: optional ``(active_layer_index, layer_dict)`` pair.
+    While Edit Mode temp VGs are loaded, the active layer's true current
+    weights live there, not in storage (persistence is deferred to Save
+    Weights) -- passing the live-read layer_dict here in place of that one
+    layer's stored blob lets a bone painted away to zero mid-session drop
+    out of the result immediately, instead of only after baking back to
+    ss_layer_N. ``None`` (default) uses storage for every layer, unchanged.
     """
     live_names = {vg.name for vg in obj.vertex_groups}
+    live_active_idx, live_layer_dict = live_override if live_override else (None, None)
 
     # {bone_name: [layer_index, ...]}
     name_to_layers: dict = {}
     for layer_idx, raw in storage.harvest_layer_data_map().items():
-        decoded = _LC.decode(raw)
+        if live_layer_dict is not None and layer_idx == live_active_idx:
+            decoded = live_layer_dict
+        else:
+            decoded = _LC.decode(raw)
         names_in_layer = set()
         for weights in decoded.values():
             names_in_layer.update(weights.keys())
@@ -76,6 +88,34 @@ def scan_orphans(storage, obj, arm_obj) -> list:
             "layer_indices": name_to_layers[name],
         })
     return results
+
+
+def composite_orphan_weight(storage, obj, orphan_name: str) -> dict:
+    """Composite *orphan_name*'s weight across all visible layers exactly
+    like flatten.flatten_visible_layers_to_mesh() composites a real bone's
+    weight -- an orphan has no real VertexGroup to write the result into,
+    but the caller (BoneIdentityService.preview_orphan_weight()) uses this
+    to populate a temporary preview VG so the native Weight Overlay can
+    still show it while the row is selected.
+
+    Returns {v_idx (int): weight (float)}, vertices with weight <= 0.001
+    omitted (mirrors flatten's own write threshold).
+    """
+    meta = storage.read_meta_list()
+    idx_to_name = {vg.index: vg.name for vg in obj.vertex_groups
+                   if not vg.name.startswith("__ssp_")}
+    layer_data_map = storage.harvest_layer_data_map()
+    mask_data_map = storage.harvest_mask_data_map()
+    num_verts = len(obj.data.vertices)
+
+    result = _LC.composite_layers(meta, layer_data_map, mask_data_map, idx_to_name, num_verts)
+
+    weights = {}
+    for v_idx, bone_weights in result.items():
+        w = bone_weights.get(orphan_name)
+        if w and w > 0.001:
+            weights[int(v_idx)] = w
+    return weights
 
 
 def delete_bone_weights(storage, meta_list, source_name: str, layer_index: int = None):

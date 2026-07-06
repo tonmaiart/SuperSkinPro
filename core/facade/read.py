@@ -167,6 +167,20 @@ class ReadFacadeMixin:
         Otherwise reads from ss_layer_N storage. Populates self._orphan_entries
         with any weight entries whose bone name is absent from the current
         vertex group list, so _write_active_layer_string() can re-merge them.
+
+        Orphan status is checked against REAL vertex_groups names, not
+        *bone_to_id* -- since read_active_layer() always passes the UNIFIED
+        mapping here (get_unified_mapping(), which assigns every orphan a
+        synthetic ID precisely so weight ops can target them), checking
+        "b not in bone_to_id" would never be true for an orphan that's
+        already tracked in superskin_bones_collection -- self._orphan_entries
+        would end up permanently empty, silently skipping
+        _purge_zeroed_orphans_from_all_layers() in
+        write.py::_write_active_layer_string() (that call is gated on
+        `orphan_entries` being truthy) even after an orphan's weight is
+        correctly scaled to zero elsewhere in the same write. The Deform
+        Bones list row would then never clear itself once weight is fully
+        stolen from an orphan bone via a normal (unlocked) weight op.
         """
         from ..layer_storage.temp_vg_bridge import has_temp_vgs, read_temp_vgs_from_bm
         from ...core_subsystems.rust_weight_engine import RustWeightEngine as _RWE_local
@@ -178,10 +192,12 @@ class ReadFacadeMixin:
         else:
             raw = self.storage.read_active_layer_dict()
 
+        real_vg_names = {vg.name for vg in self.obj.vertex_groups
+                         if not vg.name.startswith("__ssp_")}
         self._orphan_entries = {
-            v_idx: {b: w for b, w in weights.items() if b not in bone_to_id}
+            v_idx: {b: w for b, w in weights.items() if b not in real_vg_names}
             for v_idx, weights in raw.items()
-            if any(b not in bone_to_id for b in weights)
+            if any(b not in real_vg_names for b in weights)
         }
         return _RWE_local.map_layer_to_int(raw, bone_to_id)
 

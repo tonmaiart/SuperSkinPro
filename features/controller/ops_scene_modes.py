@@ -22,7 +22,8 @@ from ...core.layer_storage.temp_vg_bridge import (
     read_temp_vgs_from_bm,
 )
 from ...core.layer_storage.storage_service import LayerStorageService
-from ...core.layer_storage.geometry import get_local_mapping
+from ...core.layer_storage.geometry import get_unified_mapping
+from ...core.facade.write import purge_zeroed_orphans_after_bake
 from ...interface.utils import utils as _utils
 from ..bone_picker import deform_overlay
 
@@ -348,30 +349,50 @@ def _exit_edit_mode(op, context, *, keep_panel_open: bool = False):
 
     _restore_original_colors()
 
-    # Bake temp VGs → ss_layer_N before leaving Edit Mode
-    _bake_temp_vgs_on_exit(obj)
-
-    # Clean up the custom visualizer before leaving edit mode.
+    # Guard this whole bake -> mode_set(OBJECT) -> delete_temp_vgs sequence
+    # with superskin_internal_transaction, exactly like _do_auto_save() does
+    # around its own identical sequence. Without this, the mode_set(OBJECT)
+    # call below is indistinguishable to _superskin_auto_save_guard's
+    # depsgraph_update_post handler from an unguarded Tab-press exit -- its
+    # only check is `not scene.superskin_internal_transaction` (see that
+    # handler's docstring). Left unset here, a properly-saved exit could
+    # itself schedule a redundant _do_auto_save() bounce (mode_set(OBJECT)
+    # -> mode_set(EDIT) -> _bake_temp_vgs_on_exit() again), re-baking from
+    # whatever BMesh state exists at that later point and silently
+    # overwriting the just-committed, correct storage write with stale data
+    # -- observed as a weight-apply result on an unlocked orphan bone
+    # reverting after Save Weights, even though the bake at the time of the
+    # Save Weights click itself was already verified correct.
+    scene = context.scene
+    prev_transaction = scene.superskin_internal_transaction
+    scene.superskin_internal_transaction = True
     try:
-        CoreFacade(context).set_visualizer_mode('CLEAR')
-    except Exception:
-        pass
+        # Bake temp VGs → ss_layer_N before leaving Edit Mode
+        _bake_temp_vgs_on_exit(obj)
 
-    # Also hide the deform bone overlay — it's Edit-Mode-only and should
-    # never carry over into Object Mode.
-    try:
-        deform_overlay.hide()
-    except Exception:
-        pass
+        # Clean up the custom visualizer before leaving edit mode.
+        try:
+            CoreFacade(context).set_visualizer_mode('CLEAR')
+        except Exception:
+            pass
 
-    bpy.ops.object.mode_set(mode='OBJECT')
+        # Also hide the deform bone overlay — it's Edit-Mode-only and should
+        # never carry over into Object Mode.
+        try:
+            deform_overlay.hide()
+        except Exception:
+            pass
 
-    # Delete temp VGs in Object Mode as required by delete_temp_vgs contract.
-    try:
-        if has_temp_vgs(obj):
-            delete_temp_vgs(obj)
-    except Exception:
-        pass
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        # Delete temp VGs in Object Mode as required by delete_temp_vgs contract.
+        try:
+            if has_temp_vgs(obj):
+                delete_temp_vgs(obj)
+        except Exception:
+            pass
+    finally:
+        scene.superskin_internal_transaction = prev_transaction
 
     selected_indices = [v.index for v in obj.data.vertices if v.select]
     context.scene[f"mw_saved_selection_{obj.name}"] = selected_indices
@@ -490,7 +511,20 @@ class OBJECT_OT_mw_force_pose_mode(bpy.types.Operator):
 # ==============================================================================
 
 def _load_active_layer_to_temp_vgs(obj, context):
-    """Load the active layer into temp VGs after entering Edit Mode."""
+    """Load the active layer into temp VGs after entering Edit Mode.
+
+    Uses get_unified_mapping() (real VGs + synthetic IDs for orphan bones),
+    not get_local_mapping() (real VGs only). load_layer_to_temp_vgs() silently
+    drops any layer_dict entry whose bone name isn't a key in id_to_bone, so
+    a bone that's orphaned at the exact moment Edit Mode is entered used to
+    get no __ssp_N slot at all -- its weight was invisible for the whole
+    session, and _bake_temp_vgs_on_exit()'s write_layer_dict() (a full
+    REPLACE of the active layer) then permanently erased it from storage on
+    exit, even if the user renamed the VG back to restore it mid-session.
+    get_unified_mapping() gives orphan bones a synthetic-ID temp VG slot too,
+    so their weight round-trips through the Edit Mode session correctly
+    regardless of whether the real VG comes back before exit.
+    """
     try:
         if has_temp_vgs(obj):
             delete_temp_vgs(obj)
@@ -502,7 +536,7 @@ def _load_active_layer_to_temp_vgs(obj, context):
         active_idx = storage.get_active_layer_index()
         layer_dict = storage.read_layer_dict(active_idx)
         mask_dict = storage.read_mask_dict(active_idx)
-        _, id_to_bone = get_local_mapping(obj)
+        _, id_to_bone = get_unified_mapping(obj)
 
         load_layer_to_temp_vgs(obj, layer_dict, mask_dict, active_idx, id_to_bone)
     except Exception as e:
@@ -517,12 +551,62 @@ def _bake_temp_vgs_on_exit(obj):
         if not has_temp_vgs(obj):
             return
 
+        from ...core_subsystems.debug_logging import DebugLogService
+
+        orphan_names_before = set()
+        if DebugLogService.is_enabled("bone_id"):
+            orphan_names_before = {
+                item.name for item in obj.superskin_bones_collection if item.is_orphan
+            }
+
         bm = bmesh.from_edit_mesh(obj.data)
         layer_dict, mask_dict, active_idx = read_temp_vgs_from_bm(bm, obj)
+
+        if DebugLogService.is_enabled("bone_id") and orphan_names_before:
+            names_in_baked_layer = set()
+            per_name_verts = {}
+            for v_idx, weights in layer_dict.items():
+                for name in orphan_names_before:
+                    if name in weights:
+                        names_in_baked_layer.add(name)
+                        per_name_verts.setdefault(name, []).append(v_idx)
+            still_in_active_layer = orphan_names_before & names_in_baked_layer
+            total_mesh_verts = len(obj.data.vertices)
+            sample = {
+                name: (len(verts), verts[:10])
+                for name, verts in per_name_verts.items()
+            }
+            DebugLogService.log(
+                "bone_id",
+                f"_bake_temp_vgs_on_exit(): obj={obj.name!r} active_idx={active_idx} "
+                f"total_mesh_vertices={total_mesh_verts} "
+                f"orphans_before_bake={sorted(orphan_names_before)!r} "
+                f"still_present_in_baked_active_layer={sorted(still_in_active_layer)!r} "
+                f"(vert_count, first_10_v_idx)={sample!r} "
+                f"(empty means the active layer's own bake correctly dropped them; "
+                f"non-empty means they still carry weight in the layer being saved -- "
+                f"compare vert_count here against the flood's dirty_verts count to see "
+                f"if the flood simply missed these specific vertices)",
+            )
+
         storage = LayerStorageService(obj.data)
+        old_layer_dict = storage.read_layer_dict(active_idx)
         storage.write_layer_dict(active_idx, layer_dict)
         if mask_dict:
             storage.write_mask_dict(active_idx, mask_dict)
+        purge_zeroed_orphans_after_bake(storage, obj, old_layer_dict, layer_dict)
+
+        if DebugLogService.is_enabled("bone_id") and orphan_names_before:
+            from ...core.bone_identity import BoneIdentityService
+            after = BoneIdentityService.get_scan_for_object(obj)
+            after_map = {e["name"]: e["layer_indices"] for e in after}
+            DebugLogService.log(
+                "bone_id",
+                f"_bake_temp_vgs_on_exit(): obj={obj.name!r} POST-SAVE orphan scan -- "
+                f"{orphan_names_before!r} -> still orphaned with layer_indices="
+                f"{ {n: after_map.get(n) for n in orphan_names_before} !r} "
+                f"(a name missing from this dict entirely means it fully cleared)",
+            )
     except Exception as e:
         print(f"[SuperSkinPro] Warning: could not bake temp VGs on exit: {e}")
 
@@ -605,6 +689,14 @@ def _superskin_auto_save_guard(scene, depsgraph):
             and not scene.superskin_internal_transaction):
         try:
             if has_temp_vgs(obj):
+                from ...core_subsystems.debug_logging import DebugLogService
+                DebugLogService.log(
+                    "bone_id",
+                    f"_superskin_auto_save_guard(): obj={obj.name!r} detected "
+                    f"unguarded EDIT_MESH exit (internal_transaction was False) "
+                    f"-- scheduling _do_auto_save(). If this fires right after "
+                    f"a proper Save Weights click, it's a redundant re-bake.",
+                )
                 _schedule_auto_save(obj.name)
         except Exception:
             pass
@@ -640,7 +732,20 @@ def _schedule_auto_save(obj_name: str) -> None:
             return None
 
         if not has_temp_vgs(_obj):
+            from ...core_subsystems.debug_logging import DebugLogService
+            DebugLogService.log(
+                "bone_id",
+                f"_do_auto_save(): obj={obj_name!r} temp VGs already gone "
+                f"(deleted by the real save already ran) -- bailing, no re-bake.",
+            )
             return None
+
+        from ...core_subsystems.debug_logging import DebugLogService
+        DebugLogService.log(
+            "bone_id",
+            f"_do_auto_save(): obj={obj_name!r} temp VGs STILL PRESENT -- "
+            f"proceeding with bounce-and-rebake now.",
+        )
 
         _restore_original_colors()
 
