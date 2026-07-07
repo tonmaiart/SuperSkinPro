@@ -5,6 +5,9 @@ on:
     tags:
       - "release-trigger"
 
+permissions:
+  contents: write
+
 jobs:
   # --- JOBที่ 1: แยกกันคอมไพล์ Rust ของแต่ละ OS แล้วส่งไฟล์มารวมกัน ---
   build-rust-libraries:
