@@ -45,14 +45,17 @@ jobs:
           echo "📂 กำลังเก็บไฟล์คอมไพล์และจัดโครงสร้างสำหรับ ${{ matrix.os_name }}..."
 
           if [ "${{ matrix.os_name }}" = "windows" ]; then
-            # สำหรับ Windows ค้นหาไฟล์แล้วเซฟชื่อเป็น rust_logic.pyd
+            # Windows: ค้นหาไฟล์แล้วเซฟชื่อเป็น rust_logic.pyd
             find rust_logic/target/ -type f \( -name "*rust_logic*.pyd" -o -name "*rust_logic*.dll" \) -exec cp {} extracted_libs/bin/windows/rust_logic.pyd \; 2>/dev/null || true
           elif [ "${{ matrix.os_name }}" = "linux" ]; then
-            # สำหรับ Linux ตัดคำว่า lib นำหน้าออก เซฟชื่อเป็น rust_logic.so
+            # Linux: ตัดคำว่า lib นำหน้าออก เซฟชื่อเป็น rust_logic.so
             find rust_logic/target/ -type f -name "*rust_logic*.so" -exec cp {} extracted_libs/bin/linux/rust_logic.so \; 2>/dev/null || true
           elif [ "${{ matrix.os_name }}" = "mac" ]; then
-            # สำหรับ Mac ตัดคำว่า lib นำหน้าออก เซฟชื่อเป็น rust_logic.so
-            find rust_logic/target/ -type f -name "*rust_logic*.so" -exec cp {} extracted_libs/bin/mac/rust_logic.so \; 2>/dev/null || true
+            # macOS: ปรับปรุง Syntax ค้นหาให้รองรับทั้ง .dylib และ .so เพื่อป้องกันสถาปัตยกรรม Mac ร้องหาไฟล์ไม่เจอ
+            find rust_logic/target/ -type f \( -name "*rust_logic*.dylib" -o -name "*rust_logic*.so" \) | while read -r src_file; do
+              cp "$src_file" extracted_libs/bin/mac/rust_logic.so
+              break
+            done
           fi
 
           echo "📁 ตรวจสอบไฟล์ที่สกัดมาได้สำหรับ ${{ matrix.os_name }}:"
