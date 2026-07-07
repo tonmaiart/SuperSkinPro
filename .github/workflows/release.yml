@@ -26,7 +26,29 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. ทำการ Clean-up ลบไฟล์ตามเงื่อนไขที่คุณต้องการ
+      # 1. ติดตั้ง Rust Environment สำหรับ Platform นั้นๆ
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # 2. สั่ง Build Rust (ระบุพาธไปยัง rust_logic/Cargo.toml)
+      - name: Build Rust Project
+        run: cargo build --release --target ${{ matrix.target }} --manifest-path ./rust_logic/Cargo.toml
+
+      # 3. ย้ายตัวแปรที่ Build เสร็จแล้วจากในโฟลเดอร์ rust_logic จัดลงโฟลเดอร์ bin
+      - name: Organize into bin folder
+        shell: bash
+        run: |
+          mkdir -p bin
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp rust_logic/target/${{ matrix.target }}/release/*.exe bin/
+          else
+            # ป้องกันไม่ให้ก๊อปปี้ไฟล์เบื้องหลังจำพวก .d หรือโฟลเดอร์ย่อย
+            find rust_logic/target/${{ matrix.target }}/release/ -maxdepth 1 -type f ! -name "*.d" -exec cp {} bin/ \;
+          fi
+
+      # 4. ทำการ Clean-up ลบไฟล์/โฟลเดอร์ที่ไม่ต้องการออก (ย้ายมาทำตรงนี้เพื่อไม่ให้กระทบตอน Build)
       - name: Clean up unused folders and internal READMEs
         shell: bash
         run: |
@@ -37,31 +59,9 @@ jobs:
           rm -rf docs
 
           echo "📝 กำลังลบ README.md ทุกที่ ยกเว้นที่ Root โฟลเดอร์..."
-          # หา README.md ทั้งหมดที่ไม่ใช่ตัวแรกที่ root แล้วสั่งลบ
           find . -mindepth 2 -name "README.md" -exec rm -f {} \;
 
-      # 2. ติดตั้ง Rust Environment สำหรับ Platform นั้นๆ
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      # 3. สั่ง Build Rust (ระบุพาธไปยัง Cargo.toml ให้ถูกต้อง)
-      - name: Build Rust Project
-        run: cargo build --release --target ${{ matrix.target }} --manifest-path ./ชื่อโฟลเดอร์ย่อยของคุณ/Cargo.toml
-
-      # 4. ย้ายตัวแปรที่ Build เสร็จแล้วจัดลงโฟลเดอร์ bin
-      - name: Organize into bin folder
-        shell: bash
-        run: |
-          mkdir -p bin
-          # ปรับพาธให้วิ่งเข้าไปในโฟลเดอร์ย่อยนั้นด้วย
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cp ชื่อโฟลเดอร์ย่อยของคุณ/target/${{ matrix.target }}/release/*.exe bin/
-          else
-            cp ชื่อโฟลเดอร์ย่อยของคุณ/target/${{ matrix.target }}/release/* bin/
-          fi
-      # 5. อัปโหลดไฟล์ผลลัพธ์ (Artifacts) เก็บไว้บนเว็บ เพื่อให้คุณดาวน์โหลดไปใช้งานต่อได้ทันที
+      # 5. อัปโหลดไฟล์ผลลัพธ์ในโฟลเดอร์ bin เก็บไว้บนเว็บ
       - name: Upload Binary Package
         uses: actions/upload-artifact@v4
         with:
