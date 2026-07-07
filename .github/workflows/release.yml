@@ -3,67 +3,96 @@ name: Automated Clean-up & Cross-Platform Rust Build
 on:
   push:
     tags:
-      - "release-trigger" # ทำงานเมื่อได้รับสัญญาณ Tag จากสคริปต์คอมพิวเตอร์ของคุณ
+      - "release-trigger"
 
 jobs:
-  cleanup-and-build:
-    name: Clean Files and Build for ${{ matrix.target }}
+  # --- JOBที่ 1: แยกกันคอมไพล์ Rust ของแต่ละ OS แล้วส่งไฟล์มารวมกัน ---
+  build-rust-libraries:
+    name: Build Rust for ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: my_program_linux
+            file_ext: "*.so"
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: my_program_windows.exe
+            file_ext: "*.pyd"
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact_name: my_program_mac
+            file_ext: "*.so"
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. ติดตั้ง Rust Environment สำหรับ Platform นั้นๆ
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      # 2. สั่ง Build Rust (ระบุพาธไปยัง rust_logic/Cargo.toml)
       - name: Build Rust Project
         run: cargo build --release --target ${{ matrix.target }} --manifest-path ./rust_logic/Cargo.toml
 
-      # 3. ย้ายตัวแปรที่ Build เสร็จแล้วจากในโฟลเดอร์ rust_logic จัดลงโฟลเดอร์ bin
-      - name: Organize into bin folder
+      - name: Extract Compiled Libraries
         shell: bash
         run: |
-          mkdir -p bin
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cp rust_logic/target/${{ matrix.target }}/release/*.exe bin/
-          else
-            # ป้องกันไม่ให้ก๊อปปี้ไฟล์เบื้องหลังจำพวก .d หรือโฟลเดอร์ย่อย
-            find rust_logic/target/${{ matrix.target }}/release/ -maxdepth 1 -type f ! -name "*.d" -exec cp {} bin/ \;
-          fi
+          mkdir -p extracted_libs
+          echo "📂 กำลังเก็บไฟล์คอมไพล์สำเร็จสำหรับ ${{ matrix.file_ext }}..."
+          find rust_logic/target/ -type f -name "${{ matrix.file_ext }}" -exec cp {} extracted_libs/ \;
 
-      # 4. ทำการ Clean-up ลบไฟล์/โฟลเดอร์ที่ไม่ต้องการออก (ย้ายมาทำตรงนี้เพื่อไม่ให้กระทบตอน Build)
+      - name: Upload temporary libs
+        uses: actions/upload-artifact@v4
+        with:
+          name: libs-${{ matrix.target }}
+          path: extracted_libs/
+
+  # --- JOBที่ 2: รวบรวมไฟล์จากทุก OS มารวมกัน คลีนโฟลเดอร์ และสร้างกิ่ง release ---
+  deploy-combined-release:
+    name: Combine Libraries and Deploy to Release Branch
+    runs-on: ubuntu-latest
+    needs: build-rust-libraries
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download all compiled libs
+        uses: actions/download-artifact@v4
+        with:
+          path: combined_libs
+          merge-multiple: true
+
+      - name: Move Libraries to Project Root
+        run: |
+          echo "🚚 กำลังย้ายไฟล์ .pyd และ .so เข้ามาไว้ในโฟลเดอร์หลักของโปรเจกต์..."
+          mv combined_libs/* . || true
+          ls -la
+
       - name: Clean up unused folders and internal READMEs
         shell: bash
         run: |
-          echo "🧹 กำลังลบโฟลเดอร์ที่ไม่จำเป็น..."
+          echo "🧹 กำลังลบโฟลเดอร์ที่ไม่จำเป็นตามเงื่อนไข..."
           rm -rf .claude
           rm -rf rust_logic
           rm -rf build_all.py
           rm -rf docs
+          rm -rf combined_libs
 
           echo "📝 กำลังลบ README.md ทุกที่ ยกเว้นที่ Root โฟลเดอร์..."
           find . -mindepth 2 -name "README.md" -exec rm -f {} \;
 
-      # 5. อัปโหลดไฟล์ผลลัพธ์ในโฟลเดอร์ bin เก็บไว้บนเว็บ
-      - name: Upload Binary Package
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: bin/
+          # 🛡️ เพิ่มเติมตามข้อควรระวัง: สั่งกวาดล้างลบโฟลเดอร์แคช Python ทั้งหมดออกจากคลังโค้ดก่อนปล่อยกิ่ง release
+          echo "🐍 กำลังลบโฟลเดอร์ __pycache__ และไฟล์แคช .pyc..."
+          find . -name "__pycache__" -type d -exec rm -rf {} +
+          find . -name "*.pyc" -delete
+
+      - name: Push cleaned code with all OS binaries to release branch
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b release
+          git add -A
+          git commit -m "chore: release branch updated with combined OS binaries"
+          git push origin release --force
