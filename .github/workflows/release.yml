@@ -6,7 +6,7 @@ on:
       - "release-trigger"
 
 jobs:
-  # --- JOBที่ 1: แยกกันคอมไพล์ Rust ของแต่ละ OS แล้วส่งไฟล์มารวมกัน ---
+  # --- JOBที่ 1: แยกกันคอมไพล์ Rust ของแต่ละ OS แล้วจัดลงโฟลเดอร์เฉพาะทาง ---
   build-rust-libraries:
     name: Build Rust for ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -15,12 +15,15 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            os_name: linux
             file_ext: "*.so"
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            os_name: windows
             file_ext: "*.pyd"
           - os: macos-latest
             target: x86_64-apple-darwin
+            os_name: mac
             file_ext: "*.so"
 
     steps:
@@ -38,17 +41,24 @@ jobs:
       - name: Extract Compiled Libraries
         shell: bash
         run: |
-          mkdir -p extracted_libs
-          echo "📂 กำลังเก็บไฟล์คอมไพล์สำเร็จสำหรับ ${{ matrix.file_ext }}..."
-          find rust_logic/target/ -type f -name "${{ matrix.file_ext }}" -exec cp {} extracted_libs/ \;
+          # สร้างโครงสร้างโฟลเดอร์จำลอง bin/<os_name> เช่น bin/windows/ หรือ bin/linux/
+          mkdir -p extracted_libs/bin/${{ matrix.os_name }}
+          echo "📂 กำลังเก็บไฟล์คอมไพล์สำหรับ ${{ matrix.os_name }}..."
+
+          # เจาะจงพาธค้นหาให้ตรงจุดเพื่อไม่ให้ Windows เออร์เรอร์
+          if [ "${{ matrix.os_name }}" = "windows" ]; then
+            find rust_logic/target/x86_64-pc-windows-msvc/release/ -type f -name "${{ matrix.file_ext }}" -exec cp {} extracted_libs/bin/${{ matrix.os_name }}/ \;
+          else
+            find rust_logic/target/${{ matrix.target }}/release/ -maxdepth 1 -type f -name "${{ matrix.file_ext }}" -exec cp {} extracted_libs/bin/${{ matrix.os_name }}/ \;
+          fi
 
       - name: Upload temporary libs
         uses: actions/upload-artifact@v4
         with:
-          name: libs-${{ matrix.target }}
+          name: libs-${{ matrix.os_name }}
           path: extracted_libs/
 
-  # --- JOBที่ 2: รวบรวมไฟล์จากทุก OS มารวมกัน คลีนโฟลเดอร์ และสร้างกิ่ง release ---
+  # --- JOBที่ 2: รวบรวมโฟลเดอร์ bin จากทุก OS มารวมกัน คลีนคลังโค้ด และสร้างกิ่ง release ---
   deploy-combined-release:
     name: Combine Libraries and Deploy to Release Branch
     runs-on: ubuntu-latest
@@ -57,17 +67,20 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # ดึงไฟล์และโครงสร้างโฟลเดอร์ bin/ ของทุก OS ลงมารวมกัน
       - name: Download all compiled libs
         uses: actions/download-artifact@v4
         with:
-          path: combined_libs
+          path: temp_combined
           merge-multiple: true
 
-      - name: Move Libraries to Project Root
+      - name: Merge bin folder to Project Root
         run: |
-          echo "🚚 กำลังย้ายไฟล์ .pyd และ .so เข้ามาไว้ในโฟลเดอร์หลักของโปรเจกต์..."
-          mv combined_libs/* . || true
-          ls -la
+          echo "🚚 กำลังจัดวางโฟลเดอร์ bin/ ลงในโครงสร้างหลัก..."
+          cp -r temp_combined/bin .
+          rm -rf temp_combined
+          echo "✅ โครงสร้างโฟลเดอร์ bin ปัจจุบัน:"
+          ls -R bin
 
       - name: Clean up unused folders and internal READMEs
         shell: bash
@@ -77,22 +90,20 @@ jobs:
           rm -rf rust_logic
           rm -rf build_all.py
           rm -rf docs
-          rm -rf combined_libs
 
           echo "📝 กำลังลบ README.md ทุกที่ ยกเว้นที่ Root โฟลเดอร์..."
           find . -mindepth 2 -name "README.md" -exec rm -f {} \;
 
-          # 🛡️ เพิ่มเติมตามข้อควรระวัง: สั่งกวาดล้างลบโฟลเดอร์แคช Python ทั้งหมดออกจากคลังโค้ดก่อนปล่อยกิ่ง release
           echo "🐍 กำลังลบโฟลเดอร์ __pycache__ และไฟล์แคช .pyc..."
           find . -name "__pycache__" -type d -exec rm -rf {} +
           find . -name "*.pyc" -delete
 
-      - name: Push cleaned code with all OS binaries to release branch
+      - name: Push cleaned code with structured bin folder to release branch
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
           git checkout -b release
           git add -A
-          git commit -m "chore: release branch updated with combined OS binaries"
+          git commit -m "chore: release branch updated with structured bin folders (linux/windows/mac)"
           git push origin release --force
