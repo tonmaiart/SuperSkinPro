@@ -38,19 +38,25 @@ jobs:
       - name: Build Rust Project
         run: cargo build --release --target ${{ matrix.target }} --manifest-path ./rust_logic/Cargo.toml
 
-      - name: Extract Compiled Libraries
+      - name: Extract and Rename Compiled Libraries
         shell: bash
         run: |
-          # สร้างโครงสร้างโฟลเดอร์จำลอง bin/<os_name> เช่น bin/windows/ หรือ bin/linux/
           mkdir -p extracted_libs/bin/${{ matrix.os_name }}
-          echo "📂 กำลังเก็บไฟล์คอมไพล์สำหรับ ${{ matrix.os_name }}..."
+          echo "📂 กำลังเก็บไฟล์คอมไพล์และจัดโครงสร้างสำหรับ ${{ matrix.os_name }}..."
 
-          # เจาะจงพาธค้นหาให้ตรงจุดเพื่อไม่ให้ Windows เออร์เรอร์
           if [ "${{ matrix.os_name }}" = "windows" ]; then
-            find rust_logic/target/x86_64-pc-windows-msvc/release/ -type f -name "${{ matrix.file_ext }}" -exec cp {} extracted_libs/bin/${{ matrix.os_name }}/ \;
-          else
-            find rust_logic/target/${{ matrix.target }}/release/ -maxdepth 1 -type f -name "${{ matrix.file_ext }}" -exec cp {} extracted_libs/bin/${{ matrix.os_name }}/ \;
+            # สำหรับ Windows ค้นหาไฟล์แล้วเซฟชื่อเป็น rust_logic.pyd
+            find rust_logic/target/ -type f \( -name "*rust_logic*.pyd" -o -name "*rust_logic*.dll" \) -exec cp {} extracted_libs/bin/windows/rust_logic.pyd \; 2>/dev/null || true
+          elif [ "${{ matrix.os_name }}" = "linux" ]; then
+            # สำหรับ Linux ตัดคำว่า lib นำหน้าออก เซฟชื่อเป็น rust_logic.so
+            find rust_logic/target/ -type f -name "*rust_logic*.so" -exec cp {} extracted_libs/bin/linux/rust_logic.so \; 2>/dev/null || true
+          elif [ "${{ matrix.os_name }}" = "mac" ]; then
+            # สำหรับ Mac ตัดคำว่า lib นำหน้าออก เซฟชื่อเป็น rust_logic.so
+            find rust_logic/target/ -type f -name "*rust_logic*.so" -exec cp {} extracted_libs/bin/mac/rust_logic.so \; 2>/dev/null || true
           fi
+
+          echo "📁 ตรวจสอบไฟล์ที่สกัดมาได้สำหรับ ${{ matrix.os_name }}:"
+          ls -R extracted_libs/
 
       - name: Upload temporary libs
         uses: actions/upload-artifact@v4
@@ -67,7 +73,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # ดึงไฟล์และโครงสร้างโฟลเดอร์ bin/ ของทุก OS ลงมารวมกัน
+      # ดึงไฟล์และโครงสร้างโฟลเดอร์ bin/ จากทุก OS ลงมารวมกัน
       - name: Download all compiled libs
         uses: actions/download-artifact@v4
         with:
@@ -79,7 +85,7 @@ jobs:
           echo "🚚 กำลังจัดวางโฟลเดอร์ bin/ ลงในโครงสร้างหลัก..."
           cp -r temp_combined/bin .
           rm -rf temp_combined
-          echo "✅ โครงสร้างโฟลเดอร์ bin ปัจจุบัน:"
+          echo "✅ โครงสร้างโฟลเดอร์ bin สุดท้ายที่ได้บนกิ่ง release:"
           ls -R bin
 
       - name: Clean up unused folders and internal READMEs
@@ -105,5 +111,5 @@ jobs:
 
           git checkout -b release
           git add -A
-          git commit -m "chore: release branch updated with structured bin folders (linux/windows/mac)"
+          git commit -m "chore: release branch updated with structured bin folders (rust_logic.so/.pyd)"
           git push origin release --force
