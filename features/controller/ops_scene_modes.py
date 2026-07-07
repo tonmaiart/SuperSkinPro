@@ -259,8 +259,6 @@ def _enter_edit_mode(op, context):
         if hasattr(overlay, "show_vertex_group_weights"):
             overlay.show_vertex_group_weights = True
 
-    bpy.ops.wm.tool_set_by_id(name="builtin.select_circle")
-
     _save_and_set_gray()
 
     # Which visualizer to show right now is read directly off
@@ -485,17 +483,17 @@ class OBJECT_OT_mw_force_pose_mode(bpy.types.Operator):
             return {'CANCELLED'}
 
         if obj and obj.type == 'MESH' and obj.mode == 'EDIT':
-            bpy.ops.object.mode_set(mode='OBJECT')
-            selected_indices = [v.index for v in obj.data.vertices if v.select]
-            context.scene[f"mw_saved_selection_{obj.name}"] = selected_indices
-
-            overlay = context.space_data.overlay
-            overlay.show_weight = False
-            overlay.show_edge_bevel_weight = True
-            overlay.show_edge_crease = True
-            overlay.show_edge_seams = True
-            overlay.show_edge_sharp = True
-            overlay.show_faces = True
+            # Bake temp VGs back to the active layer before leaving Edit
+            # Mode — same shared path "Save Weights" and "Save Weight and
+            # Exit" use — so switching straight to Pose Mode never drops
+            # in-progress weight edits the way a bare mode_set(OBJECT) would.
+            result = _exit_edit_mode(self, context, keep_panel_open=True)
+            if result != {'FINISHED'}:
+                return result
+            try:
+                CoreFacade(context).finish(color_only=False)
+            except Exception as exc:
+                print(f"[SuperSkinPro] Save & Enter Pose Mode: finish() failed: {exc}")
 
         if context.active_object and context.active_object.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -508,6 +506,20 @@ class OBJECT_OT_mw_force_pose_mode(bpy.types.Operator):
         bpy.ops.object.mode_set(mode='POSE')
 
         _utils.force_close_tab()
+        return {'FINISHED'}
+
+
+class OBJECT_OT_mw_popup_main_panel(bpy.types.Operator):
+    """Reveal the SuperSkinPro sidebar panel without switching scene mode
+    or entering Edit Layer Weight — used by the pie menu's non-Edit-Mode
+    slot, which previously routed through mw_toggle_edit_mode and forced
+    the user straight into layer weight editing."""
+    bl_idname = "object.mw_popup_main_panel"
+    bl_label = "Popup Main Panel"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        _utils.force_open_super_skin_tab()
         return {'FINISHED'}
 
 
@@ -805,6 +817,7 @@ _classes = (
     OBJECT_OT_mw_exit_edit_mode,
     OBJECT_OT_mw_toggle_edit_mode,
     OBJECT_OT_mw_force_pose_mode,
+    OBJECT_OT_mw_popup_main_panel,
     SUPERSKIN_OT_enter_layer_edit,
     SUPERSKIN_OT_save_weights,
 )

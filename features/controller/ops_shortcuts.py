@@ -23,27 +23,23 @@ class MW_MT_pie_menu(bpy.types.Menu):
             pie.separator()
             pie.separator()
 
-            pie.operator("object.mw_toggle_edit_mode",
-                         text="Enter Skin Mode", icon='MOD_VERTEX_WEIGHT')
+            pie.operator("object.mw_popup_main_panel",
+                         text="Popup Main Panel", icon='MOD_VERTEX_WEIGHT')
             pie.operator("object.mw_force_pose_mode",
                          text="Enter Pose Mode", icon='POSE_HLT')
             return
 
         # ── EDIT_MESH mode: full weight-painting toolkit ─────────────
-        pie.operator("mesh.select_more",
-                     text="Grow", icon='ZOOM_IN')
-        pie.operator("superskin.safe_shrink",
-                     text="Shrink", icon='ZOOM_OUT')
+        pie.separator()
+        pie.separator()
         pie.separator()
 
-        pie.operator("object.mw_toggle_edit_mode",
-                     text="Exit Skin Mode", icon='MOD_VERTEX_WEIGHT')
+        pie.operator("superskin.save_weight_and_exit",
+                     text="Save & Enter Object Mode", icon='MOD_VERTEX_WEIGHT')
         pie.operator("object.mw_force_pose_mode",
-                     text="Enter Pose Mode", icon='POSE_HLT')
+                     text="Save & Enter Pose Mode", icon='POSE_HLT')
         pie.operator("object.mirror_weights",
                      text="Mirror Skin Weight", icon='MOD_MIRROR')
-        pie.prop(context.space_data.shading,
-                    "show_xray", text="Toggle X-Ray")
 
 
 class MW_OT_call_pie(bpy.types.Operator):

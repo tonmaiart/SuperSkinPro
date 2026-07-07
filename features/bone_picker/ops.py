@@ -448,71 +448,11 @@ class SUPERSKIN_OT_toggle_deform_bone_overlay(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_DRAG_THRESHOLD = 4  # pixels before a click becomes a drag
-
-
-class SUPERSKIN_OT_adjust_bone_overlay_size(bpy.types.Operator):
-    """Alt+Shift+MMB drag to resize bone overlay."""
-    bl_idname = "superskin.adjust_bone_overlay_size"
-    bl_label = "Adjust Bone Overlay Size"
-    bl_options = {'REGISTER'}
-
-    @classmethod
-    def poll(cls, context):
-        return not _bone_picker_active
-
-    def modal(self, context, event):
-        if event.type == 'MOUSEMOVE':
-            delta = event.mouse_x - self._initial_x
-            if not self._is_dragging and abs(delta) > _DRAG_THRESHOLD:
-                self._is_dragging = True
-            if self._is_dragging and delta != 0:
-                bp = context.window_manager.superskin_bone_picker_prefs
-                new_size = max(0.1, min(5.0, bp.overall_size + delta * 0.01))
-                bp.overall_size = new_size
-                context.area.header_text_set(f"Bone Overlay Size: {new_size:.2f}")
-                _deform_overlay._tag_redraw()
-                context.window.cursor_warp(self._initial_x, self._initial_y)
-
-        elif event.type == self._trigger_type and event.value == 'RELEASE':
-            context.window.cursor_modal_restore()
-            context.area.header_text_set(None)
-            return {'FINISHED'}
-
-        elif event.type == 'ESC':
-            context.window.cursor_modal_restore()
-            context.area.header_text_set(None)
-            if self._is_dragging:
-                context.window_manager.superskin_bone_picker_prefs.overall_size = self._backup_size
-                _deform_overlay._tag_redraw()
-            return {'CANCELLED'}
-
-        return {'RUNNING_MODAL'}
-
-    def invoke(self, context, event):
-        if _bone_picker_active:
-            return {'CANCELLED'}
-        if not context.space_data or context.space_data.type != 'VIEW_3D':
-            return {'CANCELLED'}
-        self._trigger_type = event.type
-        self._initial_x = event.mouse_x
-        self._initial_y = event.mouse_y
-        try:
-            self._backup_size = context.window_manager.superskin_bone_picker_prefs.overall_size
-        except Exception:
-            self._backup_size = 1.0
-        self._is_dragging = False
-        context.window.cursor_modal_set('NONE')
-        context.window_manager.modal_handler_add(self)
-        return {'RUNNING_MODAL'}
-
-
 _classes = (
     OBJECT_OT_ssp_toggle_color_bone_style,
     OBJECT_OT_ssp_clear_multi_selection,
     OBJECT_OT_mw_pick_bone,
     SUPERSKIN_OT_toggle_deform_bone_overlay,
-    SUPERSKIN_OT_adjust_bone_overlay_size,
 )
 
 
