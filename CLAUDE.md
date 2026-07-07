@@ -50,6 +50,7 @@ Any implementation logic that can be **parametrized away from a live `bpy.contex
 | `controller` | `features/controller/` | *(cross-cutting, no actions)* | `SKINNING` |
 | `bone_picker` | `features/bone_picker/` | `start_bone_picker`, `stop_bone_picker`, `clear_multi_selection` | `PREFERENCE` |
 | `multi_color_preview` | `features/multi_color_preview/` | `start_multi_color`, `stop_multi_color`, `toggle_multi_color` | `PREFERENCE` |
+| `debug_console` | `features/debug_console/` | *(no dispatch actions — standalone `copy_debug_log`/`clear_debug_log` operators, see the domain's README)* | `PREFERENCE` |
 | `weight_transfer`| `features/weight_transfer/` | `transfer_weight_maya` (also owns Export/Import Weight JSON, merged in from the former `data_io` domain) | `LAYER` |
 
 ---

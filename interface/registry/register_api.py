@@ -59,8 +59,14 @@ class UnifiedFeatureExtension(ABC):
     section_title: str = ""
     """Label text shown in the collapsible section header."""
 
-    draw_tab: str = ""
-    """Target workspace tab: ``'LAYER'``, ``'SKINNING'``, or ``'PREFERENCE'``."""
+    draw_tab: str | list[str] | tuple[str, ...] | set[str] = ""
+    """Target workspace tab(s): ``'LAYER'``, ``'SKINNING'``, or ``'PREFERENCE'``.
+
+    Accepts either a single string (the common case) or an iterable of
+    strings for an extension that needs to render in more than one tab
+    (e.g. ``draw_tab = ('LAYER', 'SKINNING')``). Normalized via
+    ``get_draw_tabs()``.
+    """
 
     json_path: tuple = None
     """JSON key path for persistence nesting. Defaults to ``(domain_id,)`` when left unset."""
@@ -126,13 +132,19 @@ class UnifiedFeatureExtension(ABC):
         """
         return self.section_title
 
-    def get_draw_tab(self) -> str:
-        """Target workspace tab.
+    def get_draw_tabs(self) -> set[str]:
+        """Normalized set of workspace tabs this extension renders in.
 
-        Reads from ``self.draw_tab``. Accepts ``'LAYER'``, ``'SKINNING'``,
-        or ``'PREFERENCE'``.
+        Reads from ``self.draw_tab``, which may be a single string (e.g.
+        ``'SKINNING'``) or an iterable of strings (e.g.
+        ``('LAYER', 'SKINNING')``) for extensions that need to appear in
+        more than one interface state. An empty string yields an empty set
+        (the extension renders nowhere).
         """
-        return self.draw_tab
+        value = self.draw_tab
+        if isinstance(value, str):
+            return {value} if value else set()
+        return set(value)
 
     def get_json_path(self) -> tuple:
         """JSON key path used for persistence nesting.
@@ -282,7 +294,7 @@ class UnifiedRegistry:
         # Backward compatibility: map legacy CUSTOMIZE → PREFERENCE
         if tab_key == "CUSTOMIZE":
             tab_key = "PREFERENCE"
-        matching = [e for e in cls._extensions.values() if e.get_draw_tab() == tab_key]
+        matching = [e for e in cls._extensions.values() if tab_key in e.get_draw_tabs()]
         matching.sort(key=lambda e: (0 if not e.is_collapsible() else 1, e.get_priority(), e.get_id()))
         return matching
 

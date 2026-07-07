@@ -177,6 +177,7 @@ _modules = (
 | `controller` | `features/controller/` | *(cross-cutting, no actions)* | `SKINNING` |
 | `bone_picker` | `features/bone_picker/` | `start_bone_picker`, `stop_bone_picker`, `clear_multi_selection` | `PREFERENCE` |
 | `multi_color_preview` | `features/multi_color_preview/` | `start_multi_color`, `stop_multi_color`, `toggle_multi_color` | `PREFERENCE` |
+| `debug_console` | `features/debug_console/` | *(no dispatch actions — standalone `superskin.copy_debug_log` / `superskin.clear_debug_log` operators; see the domain's own README for why)* | `PREFERENCE` |
 | `weight_transfer` | `features/weight_transfer/` | `transfer_weight_maya` (also owns Export/Import Weight JSON, self-contained operators, merged in from the former `data_io` domain) | `LAYER` |
 
 See each package's local `README.md` for domain-specific dataflow, file manifests, and guardrails.

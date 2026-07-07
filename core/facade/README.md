@@ -180,6 +180,28 @@ Both sub-steps happen inside the same Python call (`write_active_layer()` perfor
 ### `switch_to_layer(index: int) -> None`
 - **Description:** Switches the active layer to the given slot index, performing any necessary mode transitions (Edit Mode temp-VG bake/restore).
 
+---
+
+## 🪵 Debug Logging (classmethods — no instance required)
+
+These are `@classmethod`s, callable as `CoreFacade.method(...)` without constructing an instance — safe to call with no active mesh object and before/without Pro activation, unlike every method above. Backs the `debug_console` feature domain (`features/debug_console/README.md`).
+
+**Capture is unconditional.** Every category is always printed and buffered — the per-category Preferences checkboxes (`SSPrefDebug`) are a pure display filter consumed only by `debug_console`'s panel, not a capture gate.
+
+### `debug_log(category: str, message: str) -> None`
+- **Description:** Prints *message* and appends it to the in-memory log buffer. The only sanctioned way for `features/` code to reach `DebugLogService`.
+
+### `get_debug_categories() -> tuple`
+- **Description:** Returns the fixed tuple of category strings (`temp_vg`, `core_pipeline`, `rust_ffi`, `viewport_viz`, `bone_id`, `feature_domains`).
+
+### `get_debug_logs(category_filter: str | None = None, search: str = "") -> list[dict]`
+- **Description:** Returns buffered `{"timestamp", "category", "message"}` entries (oldest first, capped at 200), optionally filtered by category and/or a case-insensitive substring match on the message.
+
+### `clear_debug_logs() -> None`
+- **Description:** Discards all buffered log entries.
+
+---
+
 ### `get_ctrl()`
 - **Description:** **Escape Hatch.** Returns the internal controller instance.
 - **Guideline:** Reserved for operations not yet promoted to an explicit CoreFacade method (e.g., `_gather_auto_bone_data`, visualizer mode toggles). Every `get_ctrl()` call in a feature domain is a marker for a future facade method addition. Use the explicit methods above for all layer read/write.

@@ -14,7 +14,7 @@ The viewer domains must be first so they render at the top of their tabs:
 
   LAYER tab   : layer_viewer (first, non-collapsible) → weight_transfer (owns Export/Import JSON too)
   SKINNING tab: deform_bone_viewer (first, non-collapsible) → weight_apply → mirror → clipboard → auto_block → circle_tool_adjust
-  PREFERENCE  : bone_picker → multi_color_preview (hosted under SYSTEM tab)
+  PREFERENCE  : bone_picker → multi_color_preview → debug_console (hosted under SYSTEM tab)
 """
 
 from importlib import reload
@@ -32,6 +32,7 @@ from . import bone_picker
 from . import weight_transfer      # LAYER tab (owns Export/Import JSON too)
 from . import multi_color_preview
 from . import circle_tool_adjust
+from . import debug_console
 
 # Cross-cutting control domain (scene-mode gate, pie menu, safe-shrink)
 from . import controller
@@ -47,6 +48,7 @@ _modules = (
     weight_transfer,
     multi_color_preview,
     circle_tool_adjust,
+    debug_console,
     controller,
 )
 

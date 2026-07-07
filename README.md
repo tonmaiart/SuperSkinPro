@@ -28,7 +28,9 @@ Each extension owns:
 |---|---|
 | `LAYER` | `layer_viewer` (non-collapsible), `weight_transfer` (owns Export/Import JSON too) |
 | `SKINNING` | `deform_bone_viewer` (non-collapsible), `weight_apply`, `mirror`, `clipboard`, `auto_block_weight`, `circle_tool_adjust`, `controller` |
-| `PREFERENCE` | `bone_picker`, `multi_color_preview` (hosted in Add-on Preferences) |
+| `PREFERENCE` | `bone_picker`, `multi_color_preview` (hosted in the sidebar "Preference" panel — see `interface/panel_gate.py`) |
+
+A `draw_tab` value may also be a list/tuple/set of the above tokens for an extension that needs to render in more than one tab (normalized via `get_draw_tabs()`).
 
 ### Registration Flow
 
@@ -53,7 +55,7 @@ See `interface/registry/register_api.py` for the `UnifiedFeatureExtension` base 
 
 Quick checklist:
 1. Create `features/<name>/<name>_feature.py` extending `UnifiedFeatureExtension`.
-2. Implement `get_id()`, `get_actions()`, `get_section_title()`, `get_draw_tab()`, `execute()`, `draw_section()`.
+2. Implement `get_id()`, `get_actions()`, `get_section_title()`, `get_draw_tabs()`, `execute()`, `draw_section()`.
 3. Add `register()` / `unregister()` calling `UnifiedRegistry.register()`.
 4. Wire up `features/<name>/__init__.py` to call `<name>_feature.register()`.
 5. Add `from . import <name>` to `features/__init__.py` and append to `_modules`.

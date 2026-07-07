@@ -1,11 +1,18 @@
-"""SuperSkinPro main sidebar panel — mode-split UI.
+"""SuperSkinPro main sidebar panel — interface-split UI.
 
-Content adapts to the active Blender interaction mode:
-  OBJECT mode  -> LayerViewer + "Edit Layer Weight" gate button.
-  EDIT_MESH    -> DeformBoneViewer + tool sections + "Save Weights" gate button.
+Content adapts to ``WindowManager.superskin_active_interface`` (owned and
+registered by this module), not to Blender's native interaction mode:
+  LAYER    -> LayerViewer + "Edit Layer Weight" gate button.
+  SKINNING -> DeformBoneViewer + tool sections + "Save Weights" gate button.
 
-System/Customize settings are rendered in the native Blender Add-on Preferences
-panel instead of here, keeping the sidebar focused on artwork operations.
+This state is deliberately decoupled from ``context.mode`` — pressing Tab
+does not by itself change which interface is shown; only the explicit
+"Edit Layer Weight" / "Save Weights" operators (and the auto-save guard's
+unguarded-exit detection) flip it. See ``features/controller/ops_scene_modes.py``.
+
+System/Customize settings are rendered in the "Preference" sidebar panel
+(``panel_gate.py``) instead of here, keeping this panel focused on artwork
+operations.
 """
 
 import bpy
@@ -38,8 +45,20 @@ class VIEW3D_PT_mw_master_modular_panel(bpy.types.Panel):
 
 
 def register():
+    bpy.types.WindowManager.superskin_active_interface = bpy.props.EnumProperty(
+        name="Active Interface",
+        description="Which SuperSkinPro sidebar interface is currently shown, "
+                    "decoupled from Blender's native Object/Edit mode",
+        items=[
+            ('LAYER', "Layer", "Show the Layer weight-management interface"),
+            ('SKINNING', "Skinning", "Show the Skinning/weight-painting interface"),
+        ],
+        default='LAYER',
+        options={'SKIP_SAVE'},
+    )
     bpy.utils.register_class(VIEW3D_PT_mw_master_modular_panel)
 
 
 def unregister():
     bpy.utils.unregister_class(VIEW3D_PT_mw_master_modular_panel)
+    del bpy.types.WindowManager.superskin_active_interface

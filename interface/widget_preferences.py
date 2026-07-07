@@ -1,29 +1,33 @@
-"""SuperSkinPro N-panel sidebar — mode-split UI (no tab bar).
+"""SuperSkinPro N-panel sidebar — interface-split UI (no tab bar).
 
-The panel adapts its content to the current Blender interaction mode:
+The panel adapts its content to ``WindowManager.superskin_active_interface``
+(owned by ``panel_main.py``), NOT to the current Blender interaction mode:
 
-  OBJECT mode  — collapsible LAYER sections (LayerViewer with entry gate,
-                 weight_transfer — which also owns Export/Import JSON).
+  LAYER    — collapsible LAYER sections (LayerViewer with entry gate,
+             weight_transfer — which also owns Export/Import JSON).
 
-  EDIT_MESH    — collapsible SKINNING sections (DeformBoneViewer with exit gate,
-                 weight_apply, mirror, …).
+  SKINNING — collapsible SKINNING sections (DeformBoneViewer with exit gate,
+             weight_apply, mirror, …).
 
-System settings (ramps, palette, license, debug) are now hosted in the native
-Blender Add-on Preferences panel (Edit > Preferences > Add-ons > Super Skin Pro),
-rendered by ``draw_system_for_addon_prefs()``.
+This state is deliberately decoupled from ``context.mode`` — see
+``features/controller/ops_scene_modes.py`` for the three points where it
+flips (Edit Layer Weight, Save Weights, and the auto-save guard's
+unguarded-Tab-exit detection).
+
+System settings (ramps, palette, license) plus PREFERENCE-tab feature
+extensions (including the ``debug_console`` domain, which now owns the
+per-category debug log toggles) are hosted in the "Preference" sidebar panel
+(``panel_gate.py``), rendered by ``draw_preferences_body()``.
 
 All preference *data* lives on ``WindowManager.superskin_prefs`` (core) or on
 feature-domain PointerProperties. This module only draws; it holds no state.
 
 Feature domains register via ``UnifiedRegistry`` (Unified Component Architecture).
 Each ``UnifiedFeatureExtension`` exposes ``draw_section(layout, context)``,
-``is_collapsible()``, ``get_section_title()``, and ``get_draw_tab()``.
+``is_collapsible()``, ``get_section_title()``, and ``get_draw_tabs()``.
 """
 
 import bpy
-
-from ..core_subsystems.license_gateway import LicenseGateway
-from ..core_subsystems.debug_logging import DebugLogService
 
 
 # =========================================================================
@@ -31,30 +35,32 @@ from ..core_subsystems.debug_logging import DebugLogService
 # =========================================================================
 
 def draw_mode_split_ui(layout, context):
-    """Render either the Object-mode or Edit-mode UI based on context.mode."""
+    """Render either the Layer or Skinning interface based on
+    ``context.window_manager.superskin_active_interface`` (not context.mode)."""
     prefs = context.window_manager.superskin_prefs
-    if context.mode == 'OBJECT':
-        _draw_object_context(layout, context, prefs)
-    elif context.mode == 'EDIT_MESH':
-        _draw_edit_context(layout, context, prefs)
+    active = context.window_manager.superskin_active_interface
+    if active == 'LAYER':
+        _draw_layer_interface(layout, context, prefs)
+    elif active == 'SKINNING':
+        _draw_skinning_interface(layout, context, prefs)
 
 
 # =========================================================================
-#  State A: Object Mode — collapsible LAYER spec sections
+#  State A: Layer interface — collapsible LAYER spec sections
 # =========================================================================
 
-def _draw_object_context(layout, context, prefs):
-    """Object-mode content."""
+def _draw_layer_interface(layout, context, prefs):
+    """Layer-interface content."""
     _draw_viewer_spec(layout, context, 'LAYER')
     _draw_tool_specs(layout, context, 'LAYER')
 
 
 # =========================================================================
-#  State B: Edit Mode — collapsible SKINNING spec sections
+#  State B: Skinning interface — collapsible SKINNING spec sections
 # =========================================================================
 
-def _draw_edit_context(layout, context, prefs):
-    """Edit-mode content: auto-init guard, then spec sections."""
+def _draw_skinning_interface(layout, context, prefs):
+    """Skinning-interface content: auto-init guard, then spec sections."""
     obj = context.active_object
     if obj and obj.type == 'MESH' and "ss_layers_meta" not in obj.data:
         from .utils import utils as _utils
@@ -88,7 +94,7 @@ def _draw_tool_specs(layout, context, tab_key):
 
     for ext in UnifiedRegistry.get_by_tab(tab_key):
         if ext.is_collapsible():
-            layout.separator(factor=0.4)
+            layout.separator(factor=0.2)
             _draw_collapsible_box_ext(layout, context, ext)
 
 
@@ -123,22 +129,35 @@ def _draw_collapsible_box_ext(layout, context, ext):
 
 
 # =========================================================================
-#  Add-on Preferences entry point
+#  Preference panel entry point (interface/panel_gate.py)
 # =========================================================================
 
-def draw_system_for_addon_prefs(layout, context):
-    """Draw the System/Customize section inside Blender's Add-on Preferences panel."""
+def draw_preferences_body(layout, context):
+    """Draw the System/Customize section inside the sidebar "Preference" panel.
+
+    Formerly hosted in Blender's native Add-on Preferences window; moved here
+    so users don't have to leave the viewport to reach these settings.
+    """
     prefs = context.window_manager.superskin_prefs
-    _draw_system(layout, context, prefs)
+    _draw_preferences(layout, context, prefs)
 
 
 # =========================================================================
-#  System tab — license + visual customization (merged from CUSTOMIZE tab)
+#  Preference body — visual customization + feature extensions + system/debug
 # =========================================================================
 
-def _draw_system(layout, context, prefs):
-    """SYSTEM tab: visual customization (ramps, palette, feature extensions),
-    license activation, system/debug, and about."""
+def _draw_preferences(layout, context, prefs):
+    """Preference panel body: visual customization (ramps, palette, feature
+    extensions), system actions, and about. Per-category debug log toggles
+    and the live log view now live in the ``debug_console`` feature
+    extension, drawn as part of the PREFERENCE-tab extensions loop below,
+    not hardcoded here.
+
+    License activation is intentionally NOT drawn here — the "Preference"
+    panel that hosts this body already shows license entry/status at its own
+    top level (see ``panel_gate.py``), so repeating it here would be
+    circular.
+    """
     from .registry.register_api import UnifiedRegistry
 
     ui_state = prefs.ui_state
@@ -146,49 +165,55 @@ def _draw_system(layout, context, prefs):
 
     layout.use_property_decorate = False
 
+    # `debug_console` pinned above the hardcoded ramp/palette sections.
+    # UnifiedFeatureExtension.priority only sorts extensions *within* a tab's
+    # own loop (see UnifiedRegistry.get_by_tab()) -- there is no generic hook
+    # for an extension to ask to be drawn before this function's hardcoded
+    # content, so this is a deliberate, explicit special case rather than a
+    # reusable mechanism. Excluded from the extensions loop below to avoid a
+    # duplicate draw.
+    debug_console_ext = UnifiedRegistry.get_by_id("debug_console")
+    if debug_console_ext is not None:
+        _draw_collapsible_box_ext(layout, context, debug_console_ext)
+        layout.separator(factor=0.2)
+
     # Visual Customization — formerly the standalone CUSTOMIZE tab
     _draw_collapsible_box(
         layout, ui_state, "single_ramp_expanded", "Single Mode Color Ramp",
         lambda box: _draw_ramp_body(box, None, customize.single_ramp, "single"),
     )
-    layout.separator(factor=0.4)
+    layout.separator(factor=0.2)
     _draw_collapsible_box(
         layout, ui_state, "multi_palette_expanded", "Multi Mode Color Palette",
         lambda box: _draw_palette_body(box, customize.multi_palette.colors),
     )
-    layout.separator(factor=0.4)
+    layout.separator(factor=0.2)
     _draw_collapsible_box(
         layout, ui_state, "mask_ramp_expanded", "Mask / Layer Color Ramp",
         lambda box: _draw_ramp_body(box, None, customize.mask_ramp, "mask"),
     )
 
     # PREFERENCE-tab extensions from feature domains (e.g. Bone Picker Colors)
+    # `debug_console` is pinned above and excluded here to avoid a double draw.
     for ext in UnifiedRegistry.get_by_tab('PREFERENCE'):
-        layout.separator(factor=0.4)
+        if ext.get_id() == "debug_console":
+            continue
+        layout.separator(factor=0.2)
         _draw_collapsible_box_ext(layout, context, ext)
 
-    layout.separator()
-
-    # License
-    _draw_license(layout, prefs)
-
-    layout.separator()
+    layout.separator(factor=0.4)
 
     box = layout.box()
     box.label(text="System / Performance", icon='INFO')
     box.label(text="Coming soon")
 
-    layout.separator()
+    layout.separator(factor=0.4)
     box = layout.box()
-    box.label(text="Developer / Debug Tools", icon='CONSOLE')
-    debug = prefs.debug
-    col = box.column(align=True)
-    for attr in DebugLogService.CATEGORIES:
-        col.prop(debug, attr)
+    box.label(text="System Actions", icon='TOOL_SETTINGS')
     box.operator("superskin.reset_license_activation", text="Reset All Activate", icon='TRASH')
     box.operator("superskin.reset_prefs", text="Reset to Default", icon='LOOP_BACK')
 
-    layout.separator()
+    layout.separator(factor=0.4)
     _draw_placeholder(layout, "About", "Coming soon")
 
 
@@ -235,26 +260,6 @@ def _draw_palette_body(box, colors_coll):
     row = box.row(align=True)
     for item in colors_coll:
         row.prop(item, "color", text="")
-
-
-# =========================================================================
-#  License section helper
-# =========================================================================
-
-def _draw_license(layout, prefs):
-    lic = prefs.license
-    box = layout.box()
-
-    if LicenseGateway.is_pro():
-        box.label(text="Status: Pro Activated", icon='CHECKMARK')
-    else:
-        box.label(text="Status: Not Activated", icon='LOCKED')
-
-    box.label(text="Manage activation from the 3D Viewport sidebar")
-    box.label(text="(Super Skin Pro tab, shown while locked).")
-
-    if lic.status_message:
-        box.label(text=lic.status_message)
 
 
 def _draw_placeholder(layout, title, subtitle):

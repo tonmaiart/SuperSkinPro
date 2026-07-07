@@ -1,16 +1,23 @@
-"""SuperSkinPro status panel.
+"""SuperSkinPro Status + Preference panel.
 
-Always shown in the 3D Viewport sidebar (Super Skin Pro tab), first in the
-tab. Hosts version info, the addon update checker, license status, and a
-Settings shortcut into the addon's own Preferences page. Sorts above
-VIEW3D_PT_superskin_main (default bl_order vs. that panel's
+Always shown in the 3D Viewport sidebar (Super Skin Pro tab). Hosts version
+info, the addon update checker, license status, and — drawn directly below,
+with no extra nested collapsible wrapper — the System/Customize settings
+(color ramps, palette, PREFERENCE-tab feature extensions — including the
+``debug_console`` domain's log toggles and live log view — about) that used
+to live in Blender's native Add-on Preferences window. That window
+was hard to reach, so all of its user-facing content now lives here instead;
+see ``interface/addon_preferences.py`` for the minimal stub retained only
+for the vendored updater's property lookup.
+
+Sorts AFTER VIEW3D_PT_superskin_main (bl_order = 2000000 vs. that panel's
 bl_order = 1000000).
 
 Unlike the old activation-gate design, this panel does NOT disappear once a
 valid license is active — it stays and just switches its status box from
 "Locked" to "Activated". VIEW3D_PT_superskin_main's own poll() still
 requires activation, so before activation this is the only panel visible in
-the tab; afterward both panels coexist, Status first.
+the tab; afterward both panels coexist.
 """
 
 import bpy
@@ -18,8 +25,8 @@ import tomllib
 from pathlib import Path
 
 from .. import addon_updater_ops
-from .. import ADDON_PACKAGE
 from ..core.facade import CoreFacade
+from . import widget_preferences
 
 _cached_version = None
 
@@ -53,7 +60,8 @@ class VIEW3D_PT_superskin_gate(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Super Skin Pro'
-    bl_label = "Status"
+    bl_label = "Preference"
+    bl_order = 2000000
 
     def draw(self, context):
         layout = self.layout
@@ -77,27 +85,24 @@ class VIEW3D_PT_superskin_gate(bpy.types.Panel):
         else:
             header.label(text="Status: Locked", icon='LOCKED')
 
-        if body is None:
-            return
+        if body is not None:
+            body.label(text=f"Version {_addon_version()}")
 
-        body.label(text=f"Version {_addon_version()}")
+            if activated:
+                if lic.status_message:
+                    body.label(text=lic.status_message)
+            else:
+                body.prop(lic, "license_key", text="License Key")
+                body.operator("superskin.activate_license", text="Activate", icon='UNLOCKED')
+                if lic.status_message:
+                    body.label(text=lic.status_message)
 
-        if activated:
-            if lic.status_message:
-                body.label(text=lic.status_message)
-        else:
-            body.prop(lic, "license_key", text="License Key")
-            body.operator("superskin.activate_license", text="Activate", icon='UNLOCKED')
-            if lic.status_message:
-                body.label(text=lic.status_message)
+            body.separator(factor=0.4)
+            addon_updater_ops.update_notice_box_ui(_LayoutShim(body), context)
+            addon_updater_ops.update_settings_ui_condensed(None, context, element=body.box())
 
-        row = body.row()
-        settings_op = row.operator("preferences.addon_show", text="Settings", icon='PREFERENCES')
-        settings_op.module = ADDON_PACKAGE
-
-        body.separator()
-        addon_updater_ops.update_notice_box_ui(_LayoutShim(body), context)
-        addon_updater_ops.update_settings_ui_condensed(None, context, element=body.box())
+        layout.separator(factor=0.4)
+        widget_preferences.draw_preferences_body(layout, context)
 
 
 def register():

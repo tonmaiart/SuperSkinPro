@@ -26,8 +26,7 @@ class ControllerFeature(UnifiedFeatureExtension):
     domain_id = "controller"
     actions = []
     section_title = "Controller"
-    draw_tab = "SKINNING"
-    collapsible = True
+    draw_tab = ""  # No N-panel UI — kept out of every tab's draw loop entirely.
 
     # ── Action dispatch ───────────────────────────────────────────────────
 

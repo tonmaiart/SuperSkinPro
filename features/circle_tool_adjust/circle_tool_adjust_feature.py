@@ -6,8 +6,10 @@ Collapses the old CircleToolAdjustDomain (action dispatch) and prefs.py
 Owns:
   - SSPrefCircleToolAdjust PropertyGroup (registered on WindowManager)
   - Action dispatch: "adjust_radius_interactive"
-  - UI layout: draw_section()
   - JSON persistence: populate() / serialize_into()
+
+No N-panel UI (draw_tab="") — the brush radius is adjusted via the
+interactive modal operator, not a sidebar slider.
 """
 
 import bpy
@@ -65,7 +67,7 @@ class CircleToolAdjustFeature(UnifiedFeatureExtension):
     domain_id = "circle_tool_adjust"
     actions = ["adjust_radius_interactive"]
     section_title = "Circle Brush Adjust"
-    draw_tab = "SKINNING"
+    draw_tab = ""  # No N-panel UI — draw_section() is never invoked by UnifiedRegistry.get_by_tab().
     defaults_path = _DEFAULTS_PATH
 
     # ── Action dispatch ───────────────────────────────────────────────────
@@ -79,12 +81,10 @@ class CircleToolAdjustFeature(UnifiedFeatureExtension):
     # ── UI layout ─────────────────────────────────────────────────────────
 
     def draw_section(self, layout, context) -> None:
-        col = layout.column(align=True)
-        col.prop(
-            context.window_manager.superskin_circle_tool_adjust_prefs,
-            "brush_radius_value",
-            slider=True,
-        )
+        """No N-panel UI — draw_tab="" keeps this out of every tab's draw
+        loop, so this is never actually invoked. Required only because
+        UnifiedFeatureExtension.draw_section() is abstract."""
+        pass
 
     # ── JSON persistence ──────────────────────────────────────────────────
 

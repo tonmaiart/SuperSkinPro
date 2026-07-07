@@ -322,6 +322,8 @@ def _enter_edit_mode(op, context):
 
     CoreFacade.debug_log("temp_vg", f"_enter_edit_mode() COMPLETE: obj={obj.name!r} obj.mode={obj.mode!r} viz_mode={viz_mode!r}")
 
+    context.window_manager.superskin_active_interface = 'SKINNING'
+
     return {'FINISHED'}
 
 
@@ -424,6 +426,9 @@ def _exit_edit_mode(op, context, *, keep_panel_open: bool = False):
 
     if not keep_panel_open:
         _utils.force_close_tab()
+
+    context.window_manager.superskin_active_interface = 'LAYER'
+
     return {'FINISHED'}
 
 
@@ -624,8 +629,18 @@ class SUPERSKIN_OT_enter_layer_edit(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        # Gated on the decoupled interface state, not context.mode -- a
+        # raw Tab press into native Edit Mode (with no prior "Edit Layer
+        # Weight" trigger) leaves superskin_active_interface at 'LAYER'
+        # (see ops_scene_modes.py's flip points and interface/README.md),
+        # and _enter_edit_mode() already handles being invoked from either
+        # Object Mode or Edit Mode. Requiring context.mode == 'OBJECT' here
+        # would leave this button disabled in exactly that valid case.
         obj = context.active_object
-        return bool(obj and obj.type == 'MESH' and context.mode == 'OBJECT')
+        return bool(
+            obj and obj.type == 'MESH'
+            and context.window_manager.superskin_active_interface == 'LAYER'
+        )
 
     def execute(self, context):
         obj = context.active_object
@@ -687,6 +702,7 @@ def _superskin_auto_save_guard(scene, depsgraph):
     if (last_mode == 'EDIT_MESH'
             and current_mode != 'EDIT_MESH'
             and not scene.superskin_internal_transaction):
+        ctx.window_manager.superskin_active_interface = 'LAYER'
         try:
             if has_temp_vgs(obj):
                 from ...core_subsystems.debug_logging import DebugLogService

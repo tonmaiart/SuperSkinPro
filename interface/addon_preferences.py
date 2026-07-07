@@ -1,15 +1,19 @@
 """Blender native Add-on Preferences panel for SuperSkinPro.
 
-Hosts System/Customize settings — color ramps, multi-color palette, license
-activation, debug tools, and about — which were formerly in the SYSTEM tab
-of the N-panel sidebar. Moving them here keeps the sidebar focused on
-weight-painting operations and surfaces these settings in the standard
-Blender location (Edit > Preferences > Add-ons > Super Skin Pro).
+This class only exists because the vendored updater (``addon_updater_ops.py``)
+reads ``auto_check_update``/``updater_interval_*`` directly off
+``context.preferences.addons[ADDON_PACKAGE].preferences``, which requires a
+registered ``AddonPreferences`` subclass with this ``bl_idname`` to exist.
+
+It no longer draws user-facing settings — System/Customize settings (color
+ramps, palette, PREFERENCE-tab feature extensions, debug tools, about) moved
+to the "Preference" panel in the viewport N-panel sidebar
+(``interface/panel_gate.py``), since the Add-on Preferences window was hard
+to reach.
 """
 
 import bpy
 
-from . import widget_preferences
 from .. import ADDON_PACKAGE
 
 
@@ -53,7 +57,10 @@ class SSP_AddonPreferences(bpy.types.AddonPreferences):
     )
 
     def draw(self, context):
-        widget_preferences.draw_system_for_addon_prefs(self.layout, context)
+        self.layout.label(
+            text="Super Skin Pro settings have moved to the N-panel sidebar"
+        )
+        self.layout.label(text="(Super Skin Pro tab > Preference panel).")
 
 
 def register():

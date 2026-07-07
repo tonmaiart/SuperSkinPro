@@ -344,6 +344,36 @@ class CoreFacade(ReadFacadeMixin, WriteFacadeMixin, VisualizerFacadeMixin):
         DebugLogService.log(category, message)
 
     @classmethod
+    def get_debug_categories(cls) -> tuple:
+        """Return the fixed tuple of debug-log category strings.
+
+        Safe to call without an active mesh/context -- does not construct an
+        instance. Used by the ``debug_console`` feature domain to build its
+        category filter and per-category enable checkboxes.
+        """
+        from ...core_subsystems.debug_logging import DebugLogService
+        return DebugLogService.CATEGORIES
+
+    @classmethod
+    def get_debug_logs(cls, category_filter: str | None = None, search: str = "") -> list:
+        """Return buffered debug-log entries, optionally filtered.
+
+        Safe to call without an active mesh/context. See
+        ``DebugLogService.get_logs()`` for the filter semantics.
+        """
+        from ...core_subsystems.debug_logging import DebugLogService
+        return DebugLogService.get_logs(category_filter, search)
+
+    @classmethod
+    def clear_debug_logs(cls) -> None:
+        """Discard all buffered debug-log entries.
+
+        Safe to call without an active mesh/context.
+        """
+        from ...core_subsystems.debug_logging import DebugLogService
+        DebugLogService.clear_logs()
+
+    @classmethod
     def get_flat_array_bridge(cls):
         from ...core_subsystems.rust_weight_engine import RustWeightEngine
         return RustWeightEngine
