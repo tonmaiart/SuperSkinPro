@@ -46,23 +46,21 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # 3. สั่ง Build Rust
+      # 3. สั่ง Build Rust (ระบุพาธไปยัง Cargo.toml ให้ถูกต้อง)
       - name: Build Rust Project
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} --manifest-path ./ชื่อโฟลเดอร์ย่อยของคุณ/Cargo.toml
 
-      # 4. ย้ายตัวแปรที่ Build เสร็จแล้วจัดลงโฟลเดอร์ bin และแพ็กส่งกลับมาให้คุณ
+      # 4. ย้ายตัวแปรที่ Build เสร็จแล้วจัดลงโฟลเดอร์ bin
       - name: Organize into bin folder
         shell: bash
         run: |
           mkdir -p bin
-          # สมมติว่าไฟล์ binary ของคุณชื่อโปรเจกต์เดียวกับใน Cargo.toml
-          # ปรับเปลี่ยนเส้นทางตามโครงสร้างโฟลเดอร์จริงของคุณได้เลยครับ
+          # ปรับพาธให้วิ่งเข้าไปในโฟลเดอร์ย่อยนั้นด้วย
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cp target/${{ matrix.target }}/release/*.exe bin/
+            cp ชื่อโฟลเดอร์ย่อยของคุณ/target/${{ matrix.target }}/release/*.exe bin/
           else
-            cp target/${{ matrix.target }}/release/* bin/
+            cp ชื่อโฟลเดอร์ย่อยของคุณ/target/${{ matrix.target }}/release/* bin/
           fi
-
       # 5. อัปโหลดไฟล์ผลลัพธ์ (Artifacts) เก็บไว้บนเว็บ เพื่อให้คุณดาวน์โหลดไปใช้งานต่อได้ทันที
       - name: Upload Binary Package
         uses: actions/upload-artifact@v4
