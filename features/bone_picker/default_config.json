@@ -1,0 +1,15 @@
+{
+  "static_active_color":  [1.0, 0.15, 0.15, 1.0],
+  "static_multi_color":   [0.0, 0.3,  0.75, 0.9],
+  "static_default_color": [0.35, 0.65, 1.0, 0.35],
+  "no_influence_color":   [0.5, 0.5,  0.5,  0.35],
+  "hover_color":          [1.0, 0.55, 0.0,  1.0],
+  "static_wedge_width":   5.0,
+  "static_line_width":    1,
+  "hover_line_width":     2,
+  "hold_line_width":      3,
+  "overall_size":         1.0,
+  "pivot_ratio":          0.333,
+  "fill_opacity":         0.25,
+  "head_circle_size":     0.55
+}
